@@ -36,6 +36,20 @@ function normalizeParty(party: RawPerson['party']): string {
   return active?.name ?? party[0]?.name ?? '';
 }
 
+/** Normalize a raw membership record — API returns `person: {id, name}` not flat `person_id`. */
+function normalizeMembership(raw: Record<string, unknown>): {
+  person_id: string;
+  person_name: string;
+  role: string;
+} {
+  const person = raw['person'] as { id?: string; name?: string } | undefined;
+  return {
+    person_id: (person?.id ?? (raw['person_id'] as string | undefined) ?? '') as string,
+    person_name: (raw['person_name'] as string | undefined) ?? person?.name ?? '',
+    role: (raw['role'] as string | undefined) ?? '',
+  };
+}
+
 function normalizePerson(raw: RawPerson): Person {
   const person: Person = {
     id: raw.id,
@@ -228,7 +242,19 @@ export class OpenStatesApiService {
     };
     const url = this.buildUrl('/committees', queryParams);
     ctx.log.debug('Searching committees', { jurisdiction: params.jurisdiction });
-    return this.fetchJson<CommitteeListResponse>(url, ctx);
+    const raw = await this.fetchJson<{
+      results: Record<string, unknown>[];
+      pagination: CommitteeListResponse['pagination'];
+    }>(url, ctx);
+    return {
+      pagination: raw.pagination,
+      results: raw.results.map((c) => ({
+        ...(c as object),
+        memberships: Array.isArray(c['memberships'])
+          ? (c['memberships'] as Record<string, unknown>[]).map(normalizeMembership)
+          : undefined,
+      })) as CommitteeListResponse['results'],
+    };
   }
 
   async getCommittee(
@@ -238,7 +264,13 @@ export class OpenStatesApiService {
   ): Promise<Committee> {
     const url = this.buildUrl(`/committees/${encodeURIComponent(committeeId)}`, { include });
     ctx.log.debug('Fetching committee', { committeeId });
-    return this.fetchJson<Committee>(url, ctx);
+    const raw = await this.fetchJson<Record<string, unknown>>(url, ctx);
+    return {
+      ...(raw as object),
+      memberships: Array.isArray(raw['memberships'])
+        ? (raw['memberships'] as Record<string, unknown>[]).map(normalizeMembership)
+        : undefined,
+    } as Committee;
   }
 
   // --- Events ---

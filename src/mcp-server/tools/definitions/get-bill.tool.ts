@@ -4,8 +4,9 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
+import type { Bill } from '@/services/openstates/types.js';
 
 const BillIncludeEnum = z.enum([
   'sponsorships',
@@ -83,7 +84,6 @@ export const getBill = tool('openstates_get_bill', {
       .array(
         z
           .object({
-            id: z.string().describe('Sponsorship record ID.'),
             name: z.string().describe('Sponsor name.'),
             entity_type: z.string().describe('Entity type.'),
             primary: z.boolean().describe('Whether this is the primary sponsor.'),
@@ -104,7 +104,6 @@ export const getBill = tool('openstates_get_bill', {
       .array(
         z
           .object({
-            id: z.string().describe('Action ID.'),
             description: z.string().describe('Action description.'),
             date: z.string().describe('Action date.'),
             classification: z.array(z.string()).describe('Action classifications.'),
@@ -143,7 +142,6 @@ export const getBill = tool('openstates_get_bill', {
               .array(
                 z
                   .object({
-                    id: z.string().describe('Individual vote ID.'),
                     option: z.string().describe('How this legislator voted.'),
                     voter_name: z.string().describe('Voter name.'),
                     voter: z
@@ -266,9 +264,24 @@ export const getBill = tool('openstates_get_bill', {
     const svc = getOpenStatesApiService();
     const include = input.include && input.include.length > 0 ? input.include : undefined;
 
-    const bill = hasOcdId
-      ? await svc.getBillById(input.openstates_id!, include, ctx)
-      : await svc.getBillByPath(input.jurisdiction!, input.session!, input.bill_id!, include, ctx);
+    let bill: Bill;
+    try {
+      bill = hasOcdId
+        ? await svc.getBillById(input.openstates_id!, include, ctx)
+        : await svc.getBillByPath(
+            input.jurisdiction!,
+            input.session!,
+            input.bill_id!,
+            include,
+            ctx,
+          );
+    } catch (err) {
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+        const id = input.openstates_id ?? `${input.jurisdiction}/${input.session}/${input.bill_id}`;
+        throw ctx.fail('not_found', `Bill not found: ${id}`, { ...ctx.recoveryFor('not_found') });
+      }
+      throw err;
+    }
 
     ctx.log.info('Fetched bill', { id: bill.id, identifier: bill.identifier });
     return bill;
@@ -307,9 +320,7 @@ export const getBill = tool('openstates_get_bill', {
       for (const s of result.sponsorships) {
         const marker = s.primary ? '**Primary**' : 'Cosponsor';
         const person = s.person ? ` [person: ${s.person.name} (${s.person.id})]` : '';
-        lines.push(
-          `- [${s.id}] ${marker}: ${s.name} (${s.classification}, ${s.entity_type})${person}`,
-        );
+        lines.push(`- ${marker}: ${s.name} (${s.classification}, ${s.entity_type})${person}`);
       }
     }
 
@@ -319,7 +330,7 @@ export const getBill = tool('openstates_get_bill', {
       for (const a of result.actions) {
         const cls = a.classification.length > 0 ? ` [${a.classification.join(', ')}]` : '';
         lines.push(
-          `- [${a.id}] #${a.order} ${a.date}: ${a.description}${cls} — ${a.organization.name} (${a.organization.classification})`,
+          `- #${a.order} ${a.date}: ${a.description}${cls} — ${a.organization.name} (${a.organization.classification})`,
         );
       }
     }
@@ -336,7 +347,7 @@ export const getBill = tool('openstates_get_bill', {
           lines.push('**Individual votes:**');
           for (const pv of v.votes) {
             const voterLink = pv.voter ? ` (ID: ${pv.voter.id}, name: ${pv.voter.name})` : '';
-            lines.push(`- [${pv.id}] ${pv.voter_name}${voterLink}: ${pv.option}`);
+            lines.push(`- ${pv.voter_name}${voterLink}: ${pv.option}`);
           }
         }
       }

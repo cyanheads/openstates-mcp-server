@@ -44,7 +44,7 @@ describe('getLegislatorsByLocation', () => {
 
   it('returns legislators for valid coordinates', async () => {
     const ctx = createMockContext();
-    const input = getLegislatorsByLocation.input.parse({ lat: 47.6062, lng: -122.3321 });
+    const input = getLegislatorsByLocation.input.parse({ latitude: 47.6062, longitude: -122.3321 });
     const result = await getLegislatorsByLocation.handler(input, ctx);
     expect(result.legislators).toHaveLength(1);
     expect(result.count).toBe(1);
@@ -53,7 +53,7 @@ describe('getLegislatorsByLocation', () => {
 
   it('throws invalid_coordinate for lat out of range', async () => {
     const ctx = createMockContext({ errors: getLegislatorsByLocation.errors });
-    const input = getLegislatorsByLocation.input.parse({ lat: 91, lng: -122 });
+    const input = getLegislatorsByLocation.input.parse({ latitude: 91, longitude: -122 });
     await expect(getLegislatorsByLocation.handler(input, ctx)).rejects.toMatchObject({
       data: { reason: 'invalid_coordinate' },
     });
@@ -61,7 +61,7 @@ describe('getLegislatorsByLocation', () => {
 
   it('throws invalid_coordinate for lng out of range', async () => {
     const ctx = createMockContext({ errors: getLegislatorsByLocation.errors });
-    const input = getLegislatorsByLocation.input.parse({ lat: 47, lng: 181 });
+    const input = getLegislatorsByLocation.input.parse({ latitude: 47, longitude: 181 });
     await expect(getLegislatorsByLocation.handler(input, ctx)).rejects.toMatchObject({
       data: { reason: 'invalid_coordinate' },
     });
@@ -73,7 +73,7 @@ describe('getLegislatorsByLocation', () => {
       pagination: { page: 1, per_page: 0, max_page: 1, total_items: 0 },
     });
     const ctx = createMockContext();
-    const input = getLegislatorsByLocation.input.parse({ lat: 20, lng: -160 });
+    const input = getLegislatorsByLocation.input.parse({ latitude: 20, longitude: -160 });
     const result = await getLegislatorsByLocation.handler(input, ctx);
     expect(result.legislators).toHaveLength(0);
     expect(result.count).toBe(0);

@@ -21,8 +21,10 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
     'Find all state legislators representing a geographic coordinate. Pass latitude and longitude to get state senators and representatives (and potentially governor/executive officials) for that location. Useful for constituent-to-representative matching, address-based policy research, and electoral boundary analysis. This server does not geocode addresses — the caller must provide decimal-degree coordinates. Use include=offices to get contact information alongside the legislator list.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
-    lat: z.number().describe('Latitude in decimal degrees (e.g., 47.6062 for Seattle, WA).'),
-    lng: z.number().describe('Longitude in decimal degrees (e.g., -122.3321 for Seattle, WA).'),
+    latitude: z.number().describe('Latitude in decimal degrees (e.g., 47.6062 for Seattle, WA).'),
+    longitude: z
+      .number()
+      .describe('Longitude in decimal degrees (e.g., -122.3321 for Seattle, WA).'),
     include: z
       .array(PersonIncludeEnum)
       .optional()
@@ -100,10 +102,15 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
   ],
 
   async handler(input, ctx) {
-    if (input.lat < -90 || input.lat > 90 || input.lng < -180 || input.lng > 180) {
+    if (
+      input.latitude < -90 ||
+      input.latitude > 90 ||
+      input.longitude < -180 ||
+      input.longitude > 180
+    ) {
       throw ctx.fail(
         'invalid_coordinate',
-        `Invalid coordinates: lat=${input.lat}, lng=${input.lng}`,
+        `Invalid coordinates: latitude=${input.latitude}, longitude=${input.longitude}`,
         {
           ...ctx.recoveryFor('invalid_coordinate'),
         },
@@ -112,15 +119,15 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
 
     const svc = getOpenStatesApiService();
     const result = await svc.getPeopleByGeo(
-      input.lat,
-      input.lng,
+      input.latitude,
+      input.longitude,
       input.include && input.include.length > 0 ? input.include : undefined,
       ctx,
     );
 
     ctx.log.info('Fetched legislators by geo', {
-      lat: input.lat,
-      lng: input.lng,
+      latitude: input.latitude,
+      longitude: input.longitude,
       count: result.results.length,
     });
 
@@ -128,7 +135,7 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
       return {
         legislators: [],
         count: 0,
-        coverage_note: `No legislators found for coordinates (${input.lat}, ${input.lng}). Verify the location is within a US state, DC, or Puerto Rico.`,
+        coverage_note: `No legislators found for coordinates (${input.latitude}, ${input.longitude}). Verify the location is within a US state, DC, or Puerto Rico.`,
       };
     }
 

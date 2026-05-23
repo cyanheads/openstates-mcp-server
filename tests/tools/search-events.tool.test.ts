@@ -103,6 +103,7 @@ describe('searchEvents', () => {
     const result = {
       results: [mockEvent],
       pagination: mockEventResult.pagination,
+      coverage_note: 'Event data is experimental.',
     };
     const blocks = searchEvents.format!(result);
     expect(blocks[0].type).toBe('text');
@@ -130,6 +131,7 @@ describe('searchEvents', () => {
         },
       ],
       pagination: mockEventResult.pagination,
+      coverage_note: 'Event data is experimental.',
     };
     const blocks = searchEvents.format!(result);
     const text = (blocks[0] as { text: string }).text;
@@ -142,6 +144,7 @@ describe('searchEvents', () => {
     const result = {
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
+      coverage_note: 'Event data is experimental.',
       message: 'No events found. Event coverage is experimental.',
     };
     const blocks = searchEvents.format!(result);

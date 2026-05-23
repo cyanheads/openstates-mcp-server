@@ -65,7 +65,10 @@ export const searchEvents = tool('openstates_search_events', {
               .string()
               .describe('Event classification (e.g., "committee-meeting").'),
             start_date: z.string().describe('Event start datetime.'),
-            end_date: z.string().describe('Event end datetime.'),
+            end_date: z
+              .string()
+              .optional()
+              .describe('Event end datetime. Absent when not recorded.'),
             status: z.string().describe('Event status.'),
             jurisdiction: z
               .object({
@@ -130,6 +133,11 @@ export const searchEvents = tool('openstates_search_events', {
         total_items: z.number().describe('Total matching events.'),
       })
       .describe('Pagination metadata.'),
+    coverage_note: z
+      .string()
+      .describe(
+        'Event data is experimental — most states do not publish event data to Open States. Empty results may indicate the state lacks data, not that no events occurred.',
+      ),
     message: z
       .string()
       .optional()
@@ -157,21 +165,27 @@ export const searchEvents = tool('openstates_search_events', {
       total: result.pagination.total_items,
     });
 
+    const coverage_note =
+      'Event data is experimental — most states do not publish event data to Open States. Empty results may indicate the state lacks data, not that no events occurred.';
+
     if (result.results.length === 0) {
       return {
         results: [],
         pagination: result.pagination,
+        coverage_note,
         message:
           'No events found. Event coverage is experimental — most states do not publish event data to Open States. If you expected results, the state may lack event data entirely.',
       };
     }
 
-    return { results: result.results, pagination: result.pagination };
+    return { results: result.results, pagination: result.pagination, coverage_note };
   },
 
   format: (result) => {
     const lines: string[] = [
       `**${result.pagination.total_items} events** (page ${result.pagination.page}/${result.pagination.max_page}, per page ${result.pagination.per_page}, showing ${result.results.length})`,
+      '',
+      `> ${result.coverage_note}`,
     ];
     if (result.message) {
       lines.push('');
@@ -182,7 +196,11 @@ export const searchEvents = tool('openstates_search_events', {
       lines.push(`## ${event.name}`);
       lines.push(`**ID:** ${event.id}`);
       lines.push(`**Classification:** ${event.classification} | **Status:** ${event.status}`);
-      lines.push(`**Start:** ${event.start_date} | **End:** ${event.end_date}`);
+      lines.push(
+        event.end_date
+          ? `**Start:** ${event.start_date} | **End:** ${event.end_date}`
+          : `**Start:** ${event.start_date}`,
+      );
       lines.push(`**Jurisdiction:** ${event.jurisdiction.name} (${event.jurisdiction.id})`);
       if (event.description) lines.push(event.description);
       if (event.location) {

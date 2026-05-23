@@ -136,7 +136,6 @@ describe('getBill', () => {
     };
     const blocks = getBill.format!(result);
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('sp-1');
     expect(text).toContain('Jane Smith');
     expect(text).toContain('ocd-person/abc');
   });
@@ -164,7 +163,7 @@ describe('getBill', () => {
     expect(text).toContain('vote-1');
     expect(text).toContain('Passage of HB 1000');
     expect(text).toContain('yes: 75');
-    expect(text).toContain('pv-1');
+    expect(text).toContain('Rep. A');
   });
 
   it('handles sparse bill without optional fields', () => {

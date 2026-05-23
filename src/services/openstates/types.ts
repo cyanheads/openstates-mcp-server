@@ -243,7 +243,7 @@ export interface Event {
   classification: string;
   description: string;
   documents?: PersonLink[];
-  end_date: string;
+  end_date: string | undefined;
   id: string;
   jurisdiction: CompactJurisdiction;
   links?: PersonLink[];

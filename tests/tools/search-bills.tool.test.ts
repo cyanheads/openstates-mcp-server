@@ -167,7 +167,6 @@ describe('searchBills', () => {
     };
     const blocks = searchBills.format!(result);
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('sp-1');
     expect(text).toContain('Jane Smith');
   });
 

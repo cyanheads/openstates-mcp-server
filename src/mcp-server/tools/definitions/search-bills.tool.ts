@@ -137,7 +137,6 @@ export const searchBills = tool('openstates_search_bills', {
               .array(
                 z
                   .object({
-                    id: z.string().describe('Sponsorship record ID.'),
                     name: z.string().describe('Sponsor name.'),
                     entity_type: z.string().describe('Entity type: "person", "organization".'),
                     primary: z.boolean().describe('Whether this is the primary sponsor.'),
@@ -151,7 +150,6 @@ export const searchBills = tool('openstates_search_bills', {
               .array(
                 z
                   .object({
-                    id: z.string().describe('Action record ID.'),
                     description: z.string().describe('Action description.'),
                     date: z.string().describe('Action date.'),
                     classification: z.array(z.string()).describe('Action classifications.'),
@@ -298,9 +296,7 @@ export const searchBills = tool('openstates_search_bills', {
         lines.push('**Sponsors:**');
         for (const s of bill.sponsorships) {
           const primary = s.primary ? '**Primary**' : 'Cosponsor';
-          lines.push(
-            `- [${s.id}] ${primary}: ${s.name} (${s.classification}, entity: ${s.entity_type})`,
-          );
+          lines.push(`- ${primary}: ${s.name} (${s.classification}, entity: ${s.entity_type})`);
         }
       }
       if (bill.abstracts?.length) {
@@ -315,7 +311,7 @@ export const searchBills = tool('openstates_search_bills', {
         for (const a of bill.actions) {
           const cls = a.classification.length > 0 ? ` [${a.classification.join(', ')}]` : '';
           lines.push(
-            `- [${a.id}] #${a.order} ${a.date}: ${a.description}${cls} — ${a.organization.name} (${a.organization.classification})`,
+            `- #${a.order} ${a.date}: ${a.description}${cls} — ${a.organization.name} (${a.organization.classification})`,
           );
         }
       }

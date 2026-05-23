@@ -31,7 +31,7 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
       .number()
       .int()
       .min(1)
-      .max(20)
+      .max(52)
       .default(52)
       .describe(
         'Results per page. Default 52 to cover all states, DC, and Puerto Rico in one request.',

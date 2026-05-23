@@ -4,8 +4,9 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
+import type { Event } from '@/services/openstates/types.js';
 
 const EventIncludeEnum = z.enum([
   'links',
@@ -34,7 +35,7 @@ export const getEvent = tool('openstates_get_event', {
     description: z.string().describe('Event description.'),
     classification: z.string().describe('Event classification.'),
     start_date: z.string().describe('Event start datetime.'),
-    end_date: z.string().describe('Event end datetime.'),
+    end_date: z.string().optional().describe('Event end datetime. Absent when not recorded.'),
     status: z.string().describe('Event status.'),
     jurisdiction: z
       .object({
@@ -131,11 +132,21 @@ export const getEvent = tool('openstates_get_event', {
 
   async handler(input, ctx) {
     const svc = getOpenStatesApiService();
-    const event = await svc.getEvent(
-      input.event_id,
-      input.include && input.include.length > 0 ? input.include : undefined,
-      ctx,
-    );
+    let event: Event;
+    try {
+      event = await svc.getEvent(
+        input.event_id,
+        input.include && input.include.length > 0 ? input.include : undefined,
+        ctx,
+      );
+    } catch (err) {
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+        throw ctx.fail('not_found', `Event not found: ${input.event_id}`, {
+          ...ctx.recoveryFor('not_found'),
+        });
+      }
+      throw err;
+    }
     ctx.log.info('Fetched event', { id: event.id, name: event.name });
     return {
       id: event.id,
@@ -187,7 +198,9 @@ export const getEvent = tool('openstates_get_event', {
       `# ${result.name}`,
       `**ID:** ${result.id}`,
       `**Classification:** ${result.classification} | **Status:** ${result.status}`,
-      `**Start:** ${result.start_date} | **End:** ${result.end_date}`,
+      result.end_date
+        ? `**Start:** ${result.start_date} | **End:** ${result.end_date}`
+        : `**Start:** ${result.start_date}`,
       `**Jurisdiction:** ${result.jurisdiction.name} (${result.jurisdiction.id})`,
     ];
     if (result.description) lines.push(result.description);
