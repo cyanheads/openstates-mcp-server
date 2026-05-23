@@ -1,6 +1,6 @@
 # openstates-mcp-server - Directory Structure
 
-Generated on: 2026-05-23 19:54:11
+Generated on: 2026-05-23 19:59:20
 
 ```text
 openstates-mcp-server/
@@ -153,6 +153,7 @@ openstates-mcp-server/
 ├── .mcpbignore
 ├── biome.json
 ├── bun.lock
+├── bunfig.toml
 ├── CHANGELOG.md
 ├── CLAUDE.md
 ├── devcheck.config.json
