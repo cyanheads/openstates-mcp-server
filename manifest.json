@@ -2,8 +2,8 @@
   "manifest_version": "0.3",
   "name": "openstates-mcp-server",
   "version": "0.1.0",
-  "description": "",
-  "author": { "name": "" },
+  "description": "Search bills, legislators, committees, and events across all 50 US states, DC, and Puerto Rico.",
+  "author": { "name": "cyanheads" },
   "server": {
     "type": "node",
     "entry_point": "dist/index.js",
@@ -13,7 +13,8 @@
       "env": {
         "MCP_TRANSPORT_TYPE": "stdio",
         "MCP_AUTH_MODE": "none",
-        "NODE_ENV": "production"
+        "NODE_ENV": "production",
+        "OPENSTATES_API_KEY": "${OPENSTATES_API_KEY}"
       }
     }
   },
@@ -22,5 +23,12 @@
   },
   "tools_generated": true,
   "prompts_generated": true,
-  "user_config": {}
+  "user_config": {
+    "OPENSTATES_API_KEY": {
+      "title": "Open States API Key",
+      "description": "API key from open.pluralpolicy.com — required to query the Open States v3 API.",
+      "type": "string",
+      "required": true
+    }
+  }
 }

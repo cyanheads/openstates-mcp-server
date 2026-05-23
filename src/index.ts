@@ -11,13 +11,13 @@ import { billResearch } from './mcp-server/prompts/definitions/bill-research.pro
 import { legislatorProfile } from './mcp-server/prompts/definitions/legislator-profile.prompt.js';
 // Resources
 import { jurisdictionResource } from './mcp-server/resources/definitions/jurisdiction.resource.js';
+// Tools
 import { getBill } from './mcp-server/tools/definitions/get-bill.tool.js';
 import { getCommittee } from './mcp-server/tools/definitions/get-committee.tool.js';
 import { getEvent } from './mcp-server/tools/definitions/get-event.tool.js';
 import { getJurisdiction } from './mcp-server/tools/definitions/get-jurisdiction.tool.js';
 import { getLegislatorsByLocation } from './mcp-server/tools/definitions/get-legislators-by-location.tool.js';
 import { listJurisdictions } from './mcp-server/tools/definitions/list-jurisdictions.tool.js';
-// Tools
 import { searchBills } from './mcp-server/tools/definitions/search-bills.tool.js';
 import { searchCommittees } from './mcp-server/tools/definitions/search-committees.tool.js';
 import { searchEvents } from './mcp-server/tools/definitions/search-events.tool.js';

@@ -6,7 +6,6 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
-import type { Bill } from '@/services/openstates/types.js';
 
 const BillIncludeEnum = z.enum([
   'sponsorships',
@@ -264,24 +263,16 @@ export const getBill = tool('openstates_get_bill', {
     const svc = getOpenStatesApiService();
     const include = input.include && input.include.length > 0 ? input.include : undefined;
 
-    let bill: Bill;
-    try {
-      bill = hasOcdId
-        ? await svc.getBillById(input.openstates_id!, include, ctx)
-        : await svc.getBillByPath(
-            input.jurisdiction!,
-            input.session!,
-            input.bill_id!,
-            include,
-            ctx,
-          );
-    } catch (err) {
+    const bill = await (hasOcdId
+      ? svc.getBillById(input.openstates_id!, include, ctx)
+      : svc.getBillByPath(input.jurisdiction!, input.session!, input.bill_id!, include, ctx)
+    ).catch((err: unknown) => {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         const id = input.openstates_id ?? `${input.jurisdiction}/${input.session}/${input.bill_id}`;
         throw ctx.fail('not_found', `Bill not found: ${id}`, { ...ctx.recoveryFor('not_found') });
       }
       throw err;
-    }
+    });
 
     ctx.log.info('Fetched bill', { id: bill.id, identifier: bill.identifier });
     return bill;

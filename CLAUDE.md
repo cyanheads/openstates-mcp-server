@@ -11,38 +11,6 @@
 
 ---
 
-## First Session
-
-This project was just scaffolded with `bunx @cyanheads/mcp-ts-core init`. The framework, skills, and example definitions are in place — the domain isn't. The user's first messages will set direction; wait for them before proceeding.
-
-> **Remove this section** from CLAUDE.md / AGENTS.md after completing these steps. The skills and conventions below remain — this block is one-time onboarding only.
-
-1. **Get your bearings.** Take stock of the project tree, the skills in `skills/`, and the tools/MCP servers available. Light tool use is fine for context-building — you're mapping the territory, not committing yet.
-2. **Read the framework docs** — `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` (builders, Context, errors, exports, conventions)
-3. **Run the `setup` skill** — read `skills/setup/SKILL.md` and follow its checklist (project orientation, agent protocol file selection, echo definition cleanup, skill sync)
-4. **Design the server** — read `skills/design-mcp-server/SKILL.md` and work through it with the user to map the domain into tools, resources, and services before scaffolding
-
----
-
-## What's Next?
-
-When the user asks what's next or needs direction, suggest options based on the current project state. Common next steps:
-
-1. **Re-run the `setup` skill** — ensures CLAUDE.md, skills, structure, and metadata are populated and up to date with the current codebase
-2. **Run the `design-mcp-server` skill** — if the tool/resource surface hasn't been mapped yet, work through domain design
-3. **Add tools/resources/prompts** — scaffold new definitions using the `add-tool`, `add-app-tool`, `add-resource`, `add-prompt` skills
-4. **Add services** — scaffold domain service integrations using the `add-service` skill
-5. **Add tests** — scaffold tests for existing definitions using the `add-test` skill
-6. **Field-test definitions** — exercise tools/resources/prompts with real inputs using the `field-test` skill, get a report of issues and pain points
-7. **Run `devcheck`** — lint, format, typecheck, and security audit
-8. **Run the `security-pass` skill** — audit handlers for MCP-specific security gaps: output injection, scope blast radius, input sinks, tenant isolation
-9. **Run the `polish-docs-meta` skill** — finalize README, CHANGELOG, metadata, and agent protocol for shipping
-10. **Run the `maintenance` skill** — investigate changelogs, adopt upstream changes, and sync skills after `bun update --latest`
-
-Tailor suggestions to what's actually missing or stale — don't recite the full list every time.
-
----
-
 ## Core Rules
 
 - **Logic throws, framework catches.** Tool/resource handlers are pure — throw on failure, no `try/catch`. Plain `Error` is fine; the framework catches, classifies, and formats. Use error factories (`notFound()`, `validationError()`, etc.) when the error code matters.
@@ -59,36 +27,45 @@ Tailor suggestions to what's actually missing or stale — don't recite the full
 
 ```ts
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
-export const searchItems = tool('search_items', {
-  description: 'Search inventory items by query.',
-  annotations: { readOnlyHint: true },
+export const searchBills = tool('openstates_search_bills', {
+  title: 'Search Bills',
+  description: 'Search state legislative bills across all covered US jurisdictions...',
+  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
-    query: z.string().describe('Search terms'),
-    limit: z.number().default(10).describe('Max results'),
+    jurisdiction: z.string().optional().describe('State name, abbreviation, or OCD-ID.'),
+    q: z.string().optional().describe('Full-text search across bill titles, abstracts, and text.'),
+    // ... additional filters
   }),
   output: z.object({
-    items: z.array(z.object({
-      id: z.string().describe('Item ID'),
-      name: z.string().describe('Item name'),
-    })).describe('Matching items'),
+    results: z.array(z.object({ id: z.string().describe('OCD bill ID.'), /* ... */ })).describe('Bills.'),
+    pagination: z.object({ total_items: z.number().describe('Total matching bills.'), /* ... */ }).describe('Pagination.'),
+    message: z.string().optional().describe('Recovery hint when results are empty.'),
   }),
-  auth: ['inventory:read'],
+  errors: [
+    {
+      reason: 'missing_scope',
+      code: JsonRpcErrorCode.InvalidParams,
+      when: 'Neither jurisdiction nor q was provided.',
+      recovery: 'Provide a jurisdiction or a full-text search term via q, or both.',
+    },
+  ],
 
   async handler(input, ctx) {
-    const items = await findItems(input.query, input.limit);
-    ctx.log.info('Search completed', { query: input.query, count: items.length });
-    return { items };
+    if (!input.jurisdiction && !input.q) {
+      throw ctx.fail('missing_scope', 'Either jurisdiction or q is required.', {
+        ...ctx.recoveryFor('missing_scope'),
+      });
+    }
+    const svc = getOpenStatesApiService();
+    const result = await svc.searchBills(input, ctx);
+    ctx.log.info('Searched bills', { count: result.results.length });
+    return result;
   },
 
-  // format() populates content[] — the markdown twin of structuredContent.
-  // Different clients read different surfaces (Claude Code → structuredContent,
-  // Claude Desktop → content[]); both must carry the same data.
-  // Enforced at lint time: every field in `output` must appear in the rendered text.
-  format: (result) => [{
-    type: 'text',
-    text: result.items.map(i => `**${i.id}**: ${i.name}`).join('\n'),
-  }],
+  format: (result) => [{ type: 'text', text: result.results.map(b => `## ${b.identifier}`).join('\n') }],
 });
 ```
 
@@ -97,15 +74,20 @@ export const searchItems = tool('search_items', {
 ```ts
 import { resource, z } from '@cyanheads/mcp-ts-core';
 import { notFound } from '@cyanheads/mcp-ts-core/errors';
+import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
-export const itemData = resource('inventory://{itemId}', {
-  description: 'Fetch an inventory item by ID.',
-  params: z.object({ itemId: z.string().describe('Item identifier') }),
-  auth: ['inventory:read'],
+export const jurisdictionResource = resource('openstates://jurisdiction/{jurisdiction_id}', {
+  title: 'Jurisdiction Metadata',
+  description: 'Jurisdiction metadata including current sessions, coverage dates, and bill/people update timestamps.',
+  mimeType: 'application/json',
+  params: z.object({
+    jurisdiction_id: z.string().describe('OCD jurisdiction ID, state name, or two-letter abbreviation.'),
+  }),
   async handler(params, ctx) {
-    const item = await ctx.state.get(`item:${params.itemId}`);
-    if (!item) throw notFound(`Item ${params.itemId} not found`, { itemId: params.itemId });
-    return item;
+    const svc = getOpenStatesApiService();
+    const jurisdiction = await svc.getJurisdiction(params.jurisdiction_id, ['legislative_sessions'], ctx);
+    if (!jurisdiction) throw notFound(`Jurisdiction not found: ${params.jurisdiction_id}`, { jurisdiction_id: params.jurisdiction_id });
+    return jurisdiction;
   },
 });
 ```
@@ -115,14 +97,15 @@ export const itemData = resource('inventory://{itemId}', {
 ```ts
 import { prompt, z } from '@cyanheads/mcp-ts-core';
 
-export const reviewCode = prompt('review_code', {
-  description: 'Review code for issues and best practices.',
+export const billResearch = prompt('openstates_bill_research', {
+  description: 'Structured framework for analyzing a state bill: summary, sponsors, committee referrals, action timeline, vote record, and related legislation.',
   args: z.object({
-    code: z.string().describe('Code to review'),
-    language: z.string().optional().describe('Programming language'),
+    jurisdiction: z.string().describe('State name, abbreviation, or OCD-ID.'),
+    session: z.string().describe('Session identifier.'),
+    bill_id: z.string().describe('Bill identifier as used by the legislature (e.g., "HB 1000").'),
   }),
   generate: (args) => [
-    { role: 'user', content: { type: 'text', text: `Review this ${args.language ?? ''} code:\n${args.code}` } },
+    { role: 'user', content: { type: 'text', text: `Research bill ${args.bill_id} in ${args.jurisdiction} session ${args.session}...` } },
   ],
 });
 ```
@@ -130,20 +113,20 @@ export const reviewCode = prompt('review_code', {
 ### Server config
 
 ```ts
-// src/config/server-config.ts — lazy-parsed, separate from framework config
+// src/config/server-config.ts
 import { z } from '@cyanheads/mcp-ts-core';
 import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
 
 const ServerConfigSchema = z.object({
-  apiKey: z.string().describe('External API key'),
-  maxResults: z.coerce.number().default(100),
+  apiKey: z.string().min(1).describe('Open States API key from open.pluralpolicy.com'),
+  apiBaseUrl: z.string().default('https://v3.openstates.org').describe('Open States API base URL'),
 });
 
 let _config: z.infer<typeof ServerConfigSchema> | undefined;
 export function getServerConfig() {
   _config ??= parseEnvConfig(ServerConfigSchema, {
-    apiKey: 'MY_API_KEY',
-    maxResults: 'MY_MAX_RESULTS',
+    apiKey: 'OPENSTATES_API_KEY',
+    apiBaseUrl: 'OPENSTATES_API_BASE_URL',
   });
   return _config;
 }
@@ -218,18 +201,28 @@ See framework CLAUDE.md and the `api-errors` skill for the full auto-classificat
 src/
   index.ts                              # createApp() entry point
   config/
-    server-config.ts                    # Server-specific env vars (Zod schema)
+    server-config.ts                    # Server-specific env vars (OPENSTATES_API_KEY, OPENSTATES_API_BASE_URL)
   services/
-    [domain]/
-      [domain]-service.ts               # Domain service (init/accessor pattern)
-      types.ts                          # Domain types
+    openstates/
+      openstates-service.ts             # Open States API v3 HTTP client (init/accessor pattern)
+      types.ts                          # Domain types (Bill, Person, Committee, Event, Jurisdiction)
   mcp-server/
     tools/definitions/
-      [tool-name].tool.ts               # Tool definitions
+      search-bills.tool.ts              # openstates_search_bills
+      get-bill.tool.ts                  # openstates_get_bill
+      search-people.tool.ts             # openstates_search_people
+      get-legislators-by-location.tool.ts # openstates_get_legislators_by_location
+      search-committees.tool.ts         # openstates_search_committees
+      get-committee.tool.ts             # openstates_get_committee
+      search-events.tool.ts             # openstates_search_events
+      get-event.tool.ts                 # openstates_get_event
+      list-jurisdictions.tool.ts        # openstates_list_jurisdictions
+      get-jurisdiction.tool.ts          # openstates_get_jurisdiction
     resources/definitions/
-      [resource-name].resource.ts       # Resource definitions
+      jurisdiction.resource.ts          # openstates://jurisdiction/{jurisdiction_id}
     prompts/definitions/
-      [prompt-name].prompt.ts           # Prompt definitions
+      bill-research.prompt.ts           # openstates_bill_research
+      legislator-profile.prompt.ts      # openstates_legislator_profile
 ```
 
 ---

@@ -44,7 +44,7 @@ function normalizeMembership(raw: Record<string, unknown>): {
 } {
   const person = raw['person'] as { id?: string; name?: string } | undefined;
   return {
-    person_id: (person?.id ?? (raw['person_id'] as string | undefined) ?? '') as string,
+    person_id: person?.id ?? (raw['person_id'] as string | undefined) ?? '',
     person_name: (raw['person_name'] as string | undefined) ?? person?.name ?? '',
     role: (raw['role'] as string | undefined) ?? '',
   };
@@ -248,12 +248,12 @@ export class OpenStatesApiService {
     }>(url, ctx);
     return {
       pagination: raw.pagination,
-      results: raw.results.map((c) => ({
-        ...(c as object),
-        memberships: Array.isArray(c['memberships'])
+      results: raw.results.map((c) => {
+        const memberships = Array.isArray(c['memberships'])
           ? (c['memberships'] as Record<string, unknown>[]).map(normalizeMembership)
-          : undefined,
-      })) as CommitteeListResponse['results'],
+          : undefined;
+        return { ...c, memberships } as CommitteeListResponse['results'][number];
+      }),
     };
   }
 
@@ -265,12 +265,10 @@ export class OpenStatesApiService {
     const url = this.buildUrl(`/committees/${encodeURIComponent(committeeId)}`, { include });
     ctx.log.debug('Fetching committee', { committeeId });
     const raw = await this.fetchJson<Record<string, unknown>>(url, ctx);
-    return {
-      ...(raw as object),
-      memberships: Array.isArray(raw['memberships'])
-        ? (raw['memberships'] as Record<string, unknown>[]).map(normalizeMembership)
-        : undefined,
-    } as Committee;
+    const memberships = Array.isArray(raw['memberships'])
+      ? (raw['memberships'] as Record<string, unknown>[]).map(normalizeMembership)
+      : undefined;
+    return { ...raw, memberships } as Committee;
   }
 
   // --- Events ---

@@ -6,7 +6,6 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
-import type { Committee } from '@/services/openstates/types.js';
 
 const CommitteeIncludeEnum = z.enum(['memberships', 'links', 'sources']);
 
@@ -60,21 +59,20 @@ export const getCommittee = tool('openstates_get_committee', {
 
   async handler(input, ctx) {
     const svc = getOpenStatesApiService();
-    let committee: Committee;
-    try {
-      committee = await svc.getCommittee(
+    const committee = await svc
+      .getCommittee(
         input.committee_id,
         input.include && input.include.length > 0 ? input.include : undefined,
         ctx,
-      );
-    } catch (err) {
-      if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-        throw ctx.fail('not_found', `Committee not found: ${input.committee_id}`, {
-          ...ctx.recoveryFor('not_found'),
-        });
-      }
-      throw err;
-    }
+      )
+      .catch((err: unknown) => {
+        if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+          throw ctx.fail('not_found', `Committee not found: ${input.committee_id}`, {
+            ...ctx.recoveryFor('not_found'),
+          });
+        }
+        throw err;
+      });
     ctx.log.info('Fetched committee', { id: committee.id, name: committee.name });
     return {
       id: committee.id,

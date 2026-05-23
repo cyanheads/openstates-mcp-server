@@ -6,7 +6,6 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
-import type { Jurisdiction } from '@/services/openstates/types.js';
 
 const JurisdictionIncludeEnum = z.enum(['organizations', 'legislative_sessions', 'latest_runs']);
 
@@ -69,21 +68,20 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
 
   async handler(input, ctx) {
     const svc = getOpenStatesApiService();
-    let result: Jurisdiction;
-    try {
-      result = await svc.getJurisdiction(
+    const result = await svc
+      .getJurisdiction(
         input.jurisdiction_id,
         input.include && input.include.length > 0 ? input.include : undefined,
         ctx,
-      );
-    } catch (err) {
-      if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-        throw ctx.fail('not_found', `Jurisdiction not found: ${input.jurisdiction_id}`, {
-          ...ctx.recoveryFor('not_found'),
-        });
-      }
-      throw err;
-    }
+      )
+      .catch((err: unknown) => {
+        if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+          throw ctx.fail('not_found', `Jurisdiction not found: ${input.jurisdiction_id}`, {
+            ...ctx.recoveryFor('not_found'),
+          });
+        }
+        throw err;
+      });
     ctx.log.info('Fetched jurisdiction', { id: result.id, name: result.name });
     return {
       id: result.id,

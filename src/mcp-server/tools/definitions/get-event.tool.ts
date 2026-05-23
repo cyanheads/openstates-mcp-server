@@ -6,7 +6,6 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
-import type { Event } from '@/services/openstates/types.js';
 
 const EventIncludeEnum = z.enum([
   'links',
@@ -132,21 +131,20 @@ export const getEvent = tool('openstates_get_event', {
 
   async handler(input, ctx) {
     const svc = getOpenStatesApiService();
-    let event: Event;
-    try {
-      event = await svc.getEvent(
+    const event = await svc
+      .getEvent(
         input.event_id,
         input.include && input.include.length > 0 ? input.include : undefined,
         ctx,
-      );
-    } catch (err) {
-      if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-        throw ctx.fail('not_found', `Event not found: ${input.event_id}`, {
-          ...ctx.recoveryFor('not_found'),
-        });
-      }
-      throw err;
-    }
+      )
+      .catch((err: unknown) => {
+        if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+          throw ctx.fail('not_found', `Event not found: ${input.event_id}`, {
+            ...ctx.recoveryFor('not_found'),
+          });
+        }
+        throw err;
+      });
     ctx.log.info('Fetched event', { id: event.id, name: event.name });
     return {
       id: event.id,
