@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "openstates-mcp-server",
-  "description": "",
+  "name": "cyanheads/openstates-mcp-server",
+  "description": "MCP server for US state legislative data via the Open States API v3 — bills, legislators, committees, events, and jurisdictions for all 50 states, DC, and Puerto Rico.",
   "repository": {
-    "url": "",
+    "url": "https://github.com/cyanheads/openstates-mcp-server",
     "source": "github"
   },
   "version": "0.1.0",
