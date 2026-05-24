@@ -23,9 +23,7 @@ export const searchPeople = tool('openstates_search_people', {
     jurisdiction: z
       .string()
       .optional()
-      .describe(
-        'State name, abbreviation, or OCD-ID. Omitting searches across all states.',
-      ),
+      .describe('State name, abbreviation, or OCD-ID. Omitting searches across all states.'),
     name: z
       .string()
       .optional()
