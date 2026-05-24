@@ -37,7 +37,7 @@ WORKDIR /usr/src/app
 ENV NODE_ENV=production
 
 # OCI image metadata (https://github.com/opencontainers/image-spec/blob/main/annotations.md)
-LABEL org.opencontainers.image.title="openstates-mcp-server"
+LABEL org.opencontainers.image.title="@cyanheads/openstates-mcp-server"
 LABEL org.opencontainers.image.description="Search bills, legislators, committees, and events across all 50 US states, DC, and Puerto Rico via MCP."
 LABEL org.opencontainers.image.source="https://github.com/cyanheads/openstates-mcp-server"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
