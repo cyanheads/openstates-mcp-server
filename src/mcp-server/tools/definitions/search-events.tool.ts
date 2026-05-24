@@ -24,7 +24,7 @@ export const searchEvents = tool('openstates_search_events', {
     jurisdiction: z
       .string()
       .optional()
-      .describe('State name, abbreviation, or OCD-ID. Strongly recommended.'),
+      .describe('State name, abbreviation, or OCD-ID. Omitting searches across all states.'),
     after: z
       .string()
       .optional()

@@ -17,14 +17,14 @@ const PersonIncludeEnum = z.enum([
 export const searchPeople = tool('openstates_search_people', {
   title: 'Search People',
   description:
-    'Search state legislators and officials by name, jurisdiction, chamber, district, or party. Supports name substring matching (case-insensitive). Use org_classification to target a specific chamber: "upper" for Senate, "lower" for House/Assembly, "legislature" for all legislators, "executive" for governors and executive officials. Use include=offices to get phone, fax, and address. Use include=links for website and social links. Strongly recommend providing jurisdiction to scope results — omitting it returns legislators across all states.',
+    'Search state legislators and officials by name, jurisdiction, chamber, district, or party. Supports name substring matching (case-insensitive). org_classification targets a specific chamber: "upper" for Senate, "lower" for House/Assembly, "legislature" for all legislators, "executive" for governors and executive officials. include=offices adds phone, fax, and address. include=links adds website and social links. Omitting jurisdiction searches across all states and may return a large result set.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
     jurisdiction: z
       .string()
       .optional()
       .describe(
-        'State name, abbreviation, or OCD-ID. Strongly recommended — omitting returns legislators across all states.',
+        'State name, abbreviation, or OCD-ID. Omitting searches across all states.',
       ),
     name: z
       .string()

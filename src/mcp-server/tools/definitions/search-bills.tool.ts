@@ -32,7 +32,7 @@ const BillSortEnum = z.enum([
 export const searchBills = tool('openstates_search_bills', {
   title: 'Search Bills',
   description:
-    'Search state legislative bills across all covered US jurisdictions. Supports full-text search, jurisdiction/session filtering, subject tags, sponsor lookups, and sort order. Either jurisdiction or q (full-text) is required — combining both is common and recommended for precision. Use include=sponsorships,actions to get sponsor and action history inline and avoid a follow-up openstates_get_bill call. Use sort=latest_action_desc to find bills currently moving. Use openstates_get_jurisdiction with include=legislative_sessions to discover valid session identifiers before filtering by session.',
+    'Search state legislative bills across all covered US jurisdictions. Supports full-text search, jurisdiction/session filtering, subject tags, sponsor lookups, and sort order. Either jurisdiction or q (full-text) is required — combining both narrows results. include=sponsorships,actions returns sponsor and action history inline. sort=latest_action_desc surfaces bills currently moving. openstates_get_jurisdiction with include=legislative_sessions returns valid session identifiers for session filtering.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
     jurisdiction: z
