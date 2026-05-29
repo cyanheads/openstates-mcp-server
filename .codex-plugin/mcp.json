@@ -1,0 +1,10 @@
+{
+  "@cyanheads/openstates-mcp-server": {
+    "command": "npx",
+    "args": ["-y", "@cyanheads/openstates-mcp-server"],
+    "env": {
+      "MCP_TRANSPORT_TYPE": "stdio",
+      "OPENSTATES_API_KEY": ""
+    }
+  }
+}

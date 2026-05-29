@@ -45,6 +45,7 @@ await createApp({
     '- Either jurisdiction or q is required for openstates_search_bills.\n' +
     '- Committee and event tools are experimental — not all states have coverage.\n' +
     '- Use include parameter on search and get tools to request related data inline and avoid N+1 follow-up calls.',
+  landing: { requireAuth: false },
   setup(core) {
     const serverConfig = getServerConfig();
     initOpenStatesApiService(core.config, core.storage, serverConfig);

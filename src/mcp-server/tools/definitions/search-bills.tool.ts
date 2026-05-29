@@ -198,14 +198,14 @@ export const searchBills = tool('openstates_search_bills', {
   errors: [
     {
       reason: 'missing_scope',
-      code: JsonRpcErrorCode.InvalidParams,
+      code: JsonRpcErrorCode.ValidationError,
       when: 'Neither jurisdiction nor q (full-text search) was provided.',
       recovery:
         'Provide a jurisdiction (state name or OCD-ID) or a full-text search term via q, or both.',
     },
     {
       reason: 'invalid_session',
-      code: JsonRpcErrorCode.InvalidParams,
+      code: JsonRpcErrorCode.ValidationError,
       when: 'Session identifier was not recognized by the Open States API.',
       recovery:
         'Use openstates_get_jurisdiction with include=legislative_sessions to list valid session identifiers for this jurisdiction.',

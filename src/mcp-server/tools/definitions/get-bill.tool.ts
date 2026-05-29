@@ -232,7 +232,7 @@ export const getBill = tool('openstates_get_bill', {
   errors: [
     {
       reason: 'missing_lookup_params',
-      code: JsonRpcErrorCode.InvalidParams,
+      code: JsonRpcErrorCode.ValidationError,
       when: 'Neither openstates_id nor the complete jurisdiction+session+bill_id triple was provided.',
       recovery:
         'Provide either openstates_id (from openstates_search_bills results) or all three of: jurisdiction, session, and bill_id.',

@@ -94,7 +94,7 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
   errors: [
     {
       reason: 'invalid_coordinate',
-      code: JsonRpcErrorCode.InvalidParams,
+      code: JsonRpcErrorCode.ValidationError,
       when: 'Latitude or longitude is outside valid range.',
       recovery:
         'Latitude must be between -90 and 90, longitude between -180 and 180. For continental US: lat 24-50, lng -125 to -66. For Alaska: lat 51-72, lng -180 to -130.',
