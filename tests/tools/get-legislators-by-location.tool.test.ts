@@ -3,7 +3,7 @@
  * @module tests/tools/get-legislators-by-location.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getLegislatorsByLocation } from '@/mcp-server/tools/definitions/get-legislators-by-location.tool.js';
 
@@ -47,8 +47,9 @@ describe('getLegislatorsByLocation', () => {
     const input = getLegislatorsByLocation.input.parse({ latitude: 47.6062, longitude: -122.3321 });
     const result = await getLegislatorsByLocation.handler(input, ctx);
     expect(result.legislators).toHaveLength(1);
-    expect(result.count).toBe(1);
     expect(result.legislators[0].id).toBe('ocd-person/abc123');
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.count).toBe(1);
   });
 
   it('throws invalid_coordinate for lat out of range', async () => {
@@ -67,7 +68,7 @@ describe('getLegislatorsByLocation', () => {
     });
   });
 
-  it('returns coverage_note when no legislators found', async () => {
+  it('sets enrichment notice when no legislators found', async () => {
     mockService.getPeopleByGeo.mockResolvedValue({
       results: [],
       pagination: { page: 1, per_page: 0, max_page: 1, total_items: 0 },
@@ -76,15 +77,15 @@ describe('getLegislatorsByLocation', () => {
     const input = getLegislatorsByLocation.input.parse({ latitude: 20, longitude: -160 });
     const result = await getLegislatorsByLocation.handler(input, ctx);
     expect(result.legislators).toHaveLength(0);
-    expect(result.count).toBe(0);
-    expect(result.coverage_note).toBeDefined();
-    expect(result.coverage_note).toContain('No legislators found');
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.count).toBe(0);
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('No legislators found');
   });
 
   it('formats output with legislator id, name, and count', () => {
     const result = {
       legislators: [mockPerson],
-      count: 1,
     };
     const blocks = getLegislatorsByLocation.format!(result);
     expect(blocks[0].type).toBe('text');
@@ -96,14 +97,12 @@ describe('getLegislatorsByLocation', () => {
     expect(text).toContain('1 legislators found');
   });
 
-  it('formats coverage_note when no legislators returned', () => {
+  it('formats zero legislators when none returned', () => {
     const result = {
       legislators: [],
-      count: 0,
-      coverage_note: 'No legislators found for coordinates (20, -160).',
     };
     const blocks = getLegislatorsByLocation.format!(result);
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('No legislators found');
+    expect(text).toContain('0 legislators found');
   });
 });

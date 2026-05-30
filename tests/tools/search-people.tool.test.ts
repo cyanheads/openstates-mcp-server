@@ -3,7 +3,7 @@
  * @module tests/tools/search-people.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchPeople } from '@/mcp-server/tools/definitions/search-people.tool.js';
 
@@ -61,7 +61,7 @@ describe('searchPeople', () => {
     expect(result.results[0].family_name).toBe('Smith');
   });
 
-  it('returns empty results with a message when no legislators match', async () => {
+  it('returns empty results with enrichment notice when no legislators match', async () => {
     mockService.searchPeople.mockResolvedValue({
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
@@ -70,8 +70,10 @@ describe('searchPeople', () => {
     const input = searchPeople.input.parse({ jurisdiction: 'wa', name: 'Nonexistent' });
     const result = await searchPeople.handler(input, ctx);
     expect(result.results).toHaveLength(0);
-    expect(result.message).toBeDefined();
-    expect(result.message).toContain('No legislators matched');
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.totalItems).toBe(0);
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('No legislators matched');
   });
 
   it('includes offices when requested', async () => {

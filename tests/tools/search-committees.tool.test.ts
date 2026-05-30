@@ -3,7 +3,7 @@
  * @module tests/tools/search-committees.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchCommittees } from '@/mcp-server/tools/definitions/search-committees.tool.js';
 
@@ -39,8 +39,9 @@ describe('searchCommittees', () => {
     expect(result.results).toHaveLength(1);
     expect(result.results[0].id).toBe('ocd-organization/comm-1');
     expect(result.results[0].name).toBe('Committee on Transportation');
-    expect(result.coverage_note).toBeDefined();
-    expect(result.coverage_note).toContain('experimental');
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.coverageNote).toBeDefined();
+    expect(enrichment.coverageNote).toContain('experimental');
   });
 
   it('includes memberships when requested', async () => {
@@ -70,30 +71,28 @@ describe('searchCommittees', () => {
     );
   });
 
-  it('always returns coverage_note regardless of result count', async () => {
+  it('always sets coverageNote enrichment regardless of result count', async () => {
     mockService.searchCommittees.mockResolvedValue({
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
     });
     const ctx = createMockContext();
     const input = searchCommittees.input.parse({ jurisdiction: 'wa' });
-    const result = await searchCommittees.handler(input, ctx);
-    expect(result.coverage_note).toBeTruthy();
+    await searchCommittees.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.coverageNote).toBeTruthy();
   });
 
-  it('formats output with committee id, name, and coverage_note', () => {
+  it('formats output with committee id, name, and count', () => {
     const result = {
       results: [mockCommittee],
       pagination: mockCommitteeResult.pagination,
-      coverage_note:
-        'Committee data is experimental — Open States is working to restore support and not all states have coverage.',
     };
     const blocks = searchCommittees.format!(result);
     expect(blocks[0].type).toBe('text');
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('Committee on Transportation');
     expect(text).toContain('ocd-organization/comm-1');
-    expect(text).toContain('experimental');
     expect(text).toContain('1 committees');
   });
 
@@ -106,7 +105,6 @@ describe('searchCommittees', () => {
         },
       ],
       pagination: mockCommitteeResult.pagination,
-      coverage_note: 'Experimental.',
     };
     const blocks = searchCommittees.format!(result);
     const text = (blocks[0] as { text: string }).text;

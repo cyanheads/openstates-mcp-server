@@ -12,14 +12,14 @@
       "url": "https://openstates.caseyjhand.com/mcp"
     }
   ],
-  "version": "0.1.4",
+  "version": "0.1.5",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openstates-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "packageArguments": [
         { "type": "positional", "value": "run" },
         { "type": "positional", "value": "start:stdio" }
@@ -48,7 +48,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openstates-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "packageArguments": [
         { "type": "positional", "value": "run" },
         { "type": "positional", "value": "start:http" }

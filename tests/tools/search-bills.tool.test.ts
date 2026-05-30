@@ -3,7 +3,7 @@
  * @module tests/tools/search-bills.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchBills } from '@/mcp-server/tools/definitions/search-bills.tool.js';
 
@@ -51,6 +51,10 @@ describe('searchBills', () => {
     expect(result.results[0].id).toBe('ocd-bill/12345');
     expect(result.results[0].identifier).toBe('HB 1000');
     expect(result.pagination.total_items).toBe(1);
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.totalItems).toBe(1);
+    expect(enrichment.page).toBe(1);
+    expect(enrichment.maxPage).toBe(1);
   });
 
   it('returns bills for a full-text query', async () => {
@@ -68,7 +72,7 @@ describe('searchBills', () => {
     });
   });
 
-  it('returns empty results with a message when no bills match', async () => {
+  it('returns empty results with enrichment notice when no bills match', async () => {
     mockService.searchBills.mockResolvedValue({
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
@@ -77,8 +81,10 @@ describe('searchBills', () => {
     const input = searchBills.input.parse({ jurisdiction: 'wa', session: 'badSession' });
     const result = await searchBills.handler(input, ctx);
     expect(result.results).toHaveLength(0);
-    expect(result.message).toBeDefined();
-    expect(result.message).toContain('No bills matched');
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.totalItems).toBe(0);
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('No bills matched');
   });
 
   it('includes sponsorships and actions when requested', async () => {
@@ -136,15 +142,14 @@ describe('searchBills', () => {
     expect(text).toContain('1 bills');
   });
 
-  it('formats recovery message when results are empty', () => {
+  it('formats empty results without error', () => {
     const result = {
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
-      message: 'No bills matched jurisdiction="wa". Try broadening the query.',
     };
     const blocks = searchBills.format!(result);
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('No bills matched');
+    expect(text).toContain('0 bills');
   });
 
   it('formats sponsorships inline when present', () => {

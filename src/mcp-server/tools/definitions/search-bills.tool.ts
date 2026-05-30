@@ -188,13 +188,19 @@ export const searchBills = tool('openstates_search_bills', {
         total_items: z.number().describe('Total matching bills.'),
       })
       .describe('Pagination metadata.'),
-    message: z
+  }),
+
+  enrichment: {
+    totalItems: z.number().describe('Total bills matching the query across all pages.'),
+    page: z.number().describe('Current page returned.'),
+    maxPage: z.number().describe('Total pages available.'),
+    notice: z
       .string()
       .optional()
       .describe(
         'Recovery hint when results are empty — echoes the filters applied and suggests how to broaden. Absent when results are returned.',
       ),
-  }),
+  },
   errors: [
     {
       reason: 'missing_scope',
@@ -247,17 +253,21 @@ export const searchBills = tool('openstates_search_bills', {
       total: result.pagination.total_items,
     });
 
+    ctx.enrich({
+      totalItems: result.pagination.total_items,
+      page: result.pagination.page,
+      maxPage: result.pagination.max_page,
+    });
+
     if (result.results.length === 0) {
       const filters: string[] = [];
       if (input.jurisdiction) filters.push(`jurisdiction="${input.jurisdiction}"`);
       if (input.q) filters.push(`q="${input.q}"`);
       if (input.session) filters.push(`session="${input.session}"`);
       if (input.chamber) filters.push(`chamber="${input.chamber}"`);
-      return {
-        results: [],
-        pagination: result.pagination,
-        message: `No bills matched ${filters.join(', ')}. Try broadening the query, checking the session identifier with openstates_get_jurisdiction, or removing filters.`,
-      };
+      ctx.enrich.notice(
+        `No bills matched ${filters.join(', ')}. Try broadening the query, checking the session identifier with openstates_get_jurisdiction, or removing filters.`,
+      );
     }
 
     return { results: result.results, pagination: result.pagination };
@@ -267,10 +277,6 @@ export const searchBills = tool('openstates_search_bills', {
     const lines: string[] = [
       `**${result.pagination.total_items} bills** (page ${result.pagination.page}/${result.pagination.max_page}, per page ${result.pagination.per_page}, showing ${result.results.length})`,
     ];
-    if (result.message) {
-      lines.push('');
-      lines.push(`> ${result.message}`);
-    }
     for (const bill of result.results) {
       lines.push('');
       lines.push(`## ${bill.identifier} — ${bill.title}`);

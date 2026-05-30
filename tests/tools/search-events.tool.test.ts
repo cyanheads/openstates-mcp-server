@@ -3,7 +3,7 @@
  * @module tests/tools/search-events.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchEvents } from '@/mcp-server/tools/definitions/search-events.tool.js';
 
@@ -48,7 +48,7 @@ describe('searchEvents', () => {
     expect(result.results[0].name).toBe('Transportation Committee Hearing');
   });
 
-  it('returns empty results with experimental coverage message', async () => {
+  it('returns empty results with enrichment notice on experimental coverage', async () => {
     mockService.searchEvents.mockResolvedValue({
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
@@ -57,8 +57,10 @@ describe('searchEvents', () => {
     const input = searchEvents.input.parse({ jurisdiction: 'wa' });
     const result = await searchEvents.handler(input, ctx);
     expect(result.results).toHaveLength(0);
-    expect(result.message).toBeDefined();
-    expect(result.message).toContain('experimental');
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.coverageNote).toBeDefined();
+    expect(enrichment.notice).toBeDefined();
+    expect(enrichment.notice).toContain('experimental');
   });
 
   it('passes date range filters to service', async () => {
@@ -103,7 +105,6 @@ describe('searchEvents', () => {
     const result = {
       results: [mockEvent],
       pagination: mockEventResult.pagination,
-      coverage_note: 'Event data is experimental.',
     };
     const blocks = searchEvents.format!(result);
     expect(blocks[0].type).toBe('text');
@@ -131,7 +132,6 @@ describe('searchEvents', () => {
         },
       ],
       pagination: mockEventResult.pagination,
-      coverage_note: 'Event data is experimental.',
     };
     const blocks = searchEvents.format!(result);
     const text = (blocks[0] as { text: string }).text;
@@ -140,16 +140,13 @@ describe('searchEvents', () => {
     expect(text).toContain('bill');
   });
 
-  it('formats recovery message when empty results', () => {
+  it('formats empty results without error', () => {
     const result = {
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
-      coverage_note: 'Event data is experimental.',
-      message: 'No events found. Event coverage is experimental.',
     };
     const blocks = searchEvents.format!(result);
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('No events found');
-    expect(text).toContain('experimental');
+    expect(text).toContain('0 events');
   });
 });

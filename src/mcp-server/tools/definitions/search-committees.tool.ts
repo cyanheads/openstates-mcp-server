@@ -85,12 +85,18 @@ export const searchCommittees = tool('openstates_search_committees', {
         total_items: z.number().describe('Total matching committees.'),
       })
       .describe('Pagination metadata.'),
-    coverage_note: z
+  }),
+
+  enrichment: {
+    totalItems: z.number().describe('Total committees matching the query across all pages.'),
+    page: z.number().describe('Current page returned.'),
+    maxPage: z.number().describe('Total pages available.'),
+    coverageNote: z
       .string()
       .describe(
         'Committee data is experimental — not all states have coverage in Open States. Empty results may indicate the state lacks data, not that no committees exist.',
       ),
-  }),
+  },
 
   async handler(input, ctx) {
     const svc = getOpenStatesApiService();
@@ -113,19 +119,20 @@ export const searchCommittees = tool('openstates_search_committees', {
       total: result.pagination.total_items,
     });
 
-    return {
-      results: result.results,
-      pagination: result.pagination,
-      coverage_note:
+    ctx.enrich({
+      totalItems: result.pagination.total_items,
+      page: result.pagination.page,
+      maxPage: result.pagination.max_page,
+      coverageNote:
         'Committee data is experimental — Open States is working to restore support and not all states have coverage. Empty results may indicate the state lacks data, not that no committees exist.',
-    };
+    });
+
+    return { results: result.results, pagination: result.pagination };
   },
 
   format: (result) => {
     const lines: string[] = [
       `**${result.pagination.total_items} committees** (page ${result.pagination.page}/${result.pagination.max_page}, per page ${result.pagination.per_page}, showing ${result.results.length})`,
-      '',
-      `> ${result.coverage_note}`,
     ];
     for (const committee of result.results) {
       lines.push('');

@@ -3,7 +3,7 @@
  * @module tests/tools/list-jurisdictions.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { listJurisdictions } from '@/mcp-server/tools/definitions/list-jurisdictions.tool.js';
 
@@ -42,6 +42,10 @@ describe('listJurisdictions', () => {
     expect(result.results[0].id).toBe('ocd-jurisdiction/country:us/state:wa/government');
     expect(result.results[0].name).toBe('Washington');
     expect(result.pagination.total_items).toBe(1);
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.totalItems).toBe(1);
+    expect(enrichment.page).toBe(1);
+    expect(enrichment.maxPage).toBe(1);
   });
 
   it('passes include param when provided', async () => {

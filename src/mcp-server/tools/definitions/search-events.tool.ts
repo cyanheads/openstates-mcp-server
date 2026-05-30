@@ -133,16 +133,22 @@ export const searchEvents = tool('openstates_search_events', {
         total_items: z.number().describe('Total matching events.'),
       })
       .describe('Pagination metadata.'),
-    coverage_note: z
+  }),
+
+  enrichment: {
+    totalItems: z.number().describe('Total events matching the query across all pages.'),
+    page: z.number().describe('Current page returned.'),
+    maxPage: z.number().describe('Total pages available.'),
+    coverageNote: z
       .string()
       .describe(
         'Event data is experimental — most states do not publish event data to Open States. Empty results may indicate the state lacks data, not that no events occurred.',
       ),
-    message: z
+    notice: z
       .string()
       .optional()
       .describe('Recovery hint when results are empty. Absent when results are returned.'),
-  }),
+  },
 
   async handler(input, ctx) {
     const svc = getOpenStatesApiService();
@@ -165,32 +171,27 @@ export const searchEvents = tool('openstates_search_events', {
       total: result.pagination.total_items,
     });
 
-    const coverage_note =
-      'Event data is experimental — most states do not publish event data to Open States. Empty results may indicate the state lacks data, not that no events occurred.';
+    ctx.enrich({
+      totalItems: result.pagination.total_items,
+      page: result.pagination.page,
+      maxPage: result.pagination.max_page,
+      coverageNote:
+        'Event data is experimental — most states do not publish event data to Open States. Empty results may indicate the state lacks data, not that no events occurred.',
+    });
 
     if (result.results.length === 0) {
-      return {
-        results: [],
-        pagination: result.pagination,
-        coverage_note,
-        message:
-          'No events found. Event coverage is experimental — most states do not publish event data to Open States. If you expected results, the state may lack event data entirely.',
-      };
+      ctx.enrich.notice(
+        'No events found. Event coverage is experimental — most states do not publish event data to Open States. If you expected results, the state may lack event data entirely.',
+      );
     }
 
-    return { results: result.results, pagination: result.pagination, coverage_note };
+    return { results: result.results, pagination: result.pagination };
   },
 
   format: (result) => {
     const lines: string[] = [
       `**${result.pagination.total_items} events** (page ${result.pagination.page}/${result.pagination.max_page}, per page ${result.pagination.per_page}, showing ${result.results.length})`,
-      '',
-      `> ${result.coverage_note}`,
     ];
-    if (result.message) {
-      lines.push('');
-      lines.push(`> ${result.message}`);
-    }
     for (const event of result.results) {
       lines.push('');
       lines.push(`## ${event.name}`);

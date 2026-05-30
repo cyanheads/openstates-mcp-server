@@ -121,11 +121,17 @@ export const searchPeople = tool('openstates_search_people', {
         total_items: z.number().describe('Total matching legislators.'),
       })
       .describe('Pagination metadata.'),
-    message: z
+  }),
+
+  enrichment: {
+    totalItems: z.number().describe('Total legislators matching the query across all pages.'),
+    page: z.number().describe('Current page returned.'),
+    maxPage: z.number().describe('Total pages available.'),
+    notice: z
       .string()
       .optional()
       .describe('Recovery hint when results are empty. Absent when results are returned.'),
-  }),
+  },
 
   async handler(input, ctx) {
     const svc = getOpenStatesApiService();
@@ -148,6 +154,12 @@ export const searchPeople = tool('openstates_search_people', {
       total: result.pagination.total_items,
     });
 
+    ctx.enrich({
+      totalItems: result.pagination.total_items,
+      page: result.pagination.page,
+      maxPage: result.pagination.max_page,
+    });
+
     if (result.results.length === 0) {
       const filters: string[] = [];
       if (input.jurisdiction) filters.push(`jurisdiction="${input.jurisdiction}"`);
@@ -155,11 +167,9 @@ export const searchPeople = tool('openstates_search_people', {
       if (input.org_classification)
         filters.push(`org_classification="${input.org_classification}"`);
       if (input.district) filters.push(`district="${input.district}"`);
-      return {
-        results: [],
-        pagination: result.pagination,
-        message: `No legislators matched ${filters.join(', ')}. Try broadening the name filter, checking the jurisdiction, or removing the district filter.`,
-      };
+      ctx.enrich.notice(
+        `No legislators matched ${filters.join(', ')}. Try broadening the name filter, checking the jurisdiction, or removing the district filter.`,
+      );
     }
 
     return { results: result.results, pagination: result.pagination };
@@ -169,10 +179,6 @@ export const searchPeople = tool('openstates_search_people', {
     const lines: string[] = [
       `**${result.pagination.total_items} legislators** (page ${result.pagination.page}/${result.pagination.max_page}, per page ${result.pagination.per_page}, showing ${result.results.length})`,
     ];
-    if (result.message) {
-      lines.push('');
-      lines.push(`> ${result.message}`);
-    }
     for (const person of result.results) {
       lines.push('');
       lines.push(`## ${person.name}`);

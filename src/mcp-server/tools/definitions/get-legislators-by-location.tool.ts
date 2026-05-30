@@ -83,14 +83,17 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
           .describe('Legislator record.'),
       )
       .describe('Legislators representing the given coordinate.'),
-    count: z.number().describe('Number of legislators returned.'),
-    coverage_note: z
+  }),
+
+  enrichment: {
+    count: z.number().describe('Number of legislators returned for this coordinate.'),
+    notice: z
       .string()
       .optional()
       .describe(
         'Present when no legislators were found — explains why (e.g., location outside US boundaries or unsupported territory).',
       ),
-  }),
+  },
   errors: [
     {
       reason: 'invalid_coordinate',
@@ -131,23 +134,19 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
       count: result.results.length,
     });
 
+    ctx.enrich({ count: result.results.length });
+
     if (result.results.length === 0) {
-      return {
-        legislators: [],
-        count: 0,
-        coverage_note: `No legislators found for coordinates (${input.latitude}, ${input.longitude}). Verify the location is within a US state, DC, or Puerto Rico.`,
-      };
+      ctx.enrich.notice(
+        `No legislators found for coordinates (${input.latitude}, ${input.longitude}). Verify the location is within a US state, DC, or Puerto Rico.`,
+      );
     }
 
-    return { legislators: result.results, count: result.results.length };
+    return { legislators: result.results };
   },
 
   format: (result) => {
-    const lines: string[] = [`**${result.count} legislators found**`];
-    if (result.coverage_note) {
-      lines.push('');
-      lines.push(`> ${result.coverage_note}`);
-    }
+    const lines: string[] = [`**${result.legislators.length} legislators found**`];
     for (const person of result.legislators) {
       lines.push('');
       lines.push(`## ${person.name}`);
