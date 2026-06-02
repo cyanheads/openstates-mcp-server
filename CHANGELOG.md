@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.6](changelog/0.1.x/0.1.6.md) — 2026-06-02
+
+Adopt @cyanheads/mcp-ts-core 0.9.21 — per-request log context fix, secret-safe fetchWithTimeout, withRetry fail-fast; README client-config key normalization; release:github script
+
 ## [0.1.5](changelog/0.1.x/0.1.5.md) — 2026-05-30
 
 Enrichment adoption — search/list tools surface true result totals, pagination, and coverage/empty-result guidance via a typed enrichment block in both structuredContent and content[]

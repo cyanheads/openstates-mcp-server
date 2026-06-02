@@ -1,8 +1,8 @@
 # Developer Protocol
 
 **Server:** @cyanheads/openstates-mcp-server
-**Version:** 0.1.5
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.16`
+**Version:** 0.1.6
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.21`
 **Engines:** Bun ≥1.3.0, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/sdk` ^1.29.0
 **Zod:** ^4.4.3
@@ -278,7 +278,9 @@ Available skills:
 | `api-testing` | createMockContext, test patterns |
 | `api-utils` | Formatting, parsing, security, pagination, scheduling, telemetry helpers |
 | `api-telemetry` | OTel catalog: spans, metrics, completion logs, env config, cardinality rules |
+| `api-mirror` | MirrorService: persistent local SQLite mirror of a bulk upstream dataset — FTS5, sync state machine, Bun/Node only |
 | `api-workers` | Cloudflare Workers runtime |
+| `orchestrations` | Chain task skills into a gated multi-phase pipeline (build-out, QA-fix, update-ship) when sub-agents are available |
 
 When you complete a skill's checklist, check the boxes and add a completion timestamp at the end (e.g., `Completed: 2026-03-11`).
 
@@ -300,6 +302,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `npm test` | Run tests |
 | `npm run start:stdio` | Production mode (stdio) |
 | `npm run start:http` | Production mode (HTTP) |
+| `bun run release:github` | Create GitHub Release — constructs title from tag subject and attaches `.mcpb` if present |
 | `npm run changelog:build` | Regenerate `CHANGELOG.md` from `changelog/*.md` |
 | `npm run changelog:check` | Verify `CHANGELOG.md` is in sync (used by devcheck) |
 | `npm run bundle` | Build and pack as `.mcpb` for one-click Claude Desktop install |
