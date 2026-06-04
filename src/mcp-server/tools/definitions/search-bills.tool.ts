@@ -260,13 +260,21 @@ export const searchBills = tool('openstates_search_bills', {
     });
 
     if (result.results.length === 0) {
+      if (input.session) {
+        throw ctx.fail(
+          'invalid_session',
+          `Session "${input.session}" returned no results — the identifier may not be recognized for this jurisdiction.`,
+          {
+            ...ctx.recoveryFor('invalid_session'),
+          },
+        );
+      }
       const filters: string[] = [];
       if (input.jurisdiction) filters.push(`jurisdiction="${input.jurisdiction}"`);
       if (input.q) filters.push(`q="${input.q}"`);
-      if (input.session) filters.push(`session="${input.session}"`);
       if (input.chamber) filters.push(`chamber="${input.chamber}"`);
       ctx.enrich.notice(
-        `No bills matched ${filters.join(', ')}. Try broadening the query, checking the session identifier with openstates_get_jurisdiction, or removing filters.`,
+        `No bills matched ${filters.join(', ')}. Try broadening the query or removing filters.`,
       );
     }
 

@@ -1,9 +1,10 @@
 /**
  * @fileoverview Additional coverage for searchPeople: pagination enrichment,
- * filters, district/org_classification, sparse upstream fields.
+ * filters, district/org_classification, sparse upstream fields, error contracts.
  * @module tests/tools/search-people.additional.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchPeople } from '@/mcp-server/tools/definitions/search-people.tool.js';
@@ -197,5 +198,50 @@ describe('searchPeople — format edge cases', () => {
 
   it('per_page maximum is 20', () => {
     expect(() => searchPeople.input.parse({ jurisdiction: 'wa', per_page: 21 })).toThrow();
+  });
+});
+
+describe('searchPeople — name_too_short error contract', () => {
+  let mockService: { searchPeople: ReturnType<typeof vi.fn> };
+
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    mockService = { searchPeople: vi.fn() };
+    vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
+  });
+
+  it('throws name_too_short when API returns InvalidParams for a single-character name', async () => {
+    mockService.searchPeople.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.InvalidParams, 'Bad request'),
+    );
+    const ctx = createMockContext({ errors: searchPeople.errors });
+    const input = searchPeople.input.parse({ name: 'J' });
+    await expect(searchPeople.handler(input, ctx)).rejects.toMatchObject({
+      data: { reason: 'name_too_short' },
+    });
+  });
+
+  it('rethrows non-InvalidParams errors unchanged', async () => {
+    const originalErr = new McpError(JsonRpcErrorCode.ServiceUnavailable, 'API down');
+    mockService.searchPeople.mockRejectedValue(originalErr);
+    const ctx = createMockContext({ errors: searchPeople.errors });
+    const input = searchPeople.input.parse({ name: 'J' });
+    await expect(searchPeople.handler(input, ctx)).rejects.toBe(originalErr);
+  });
+
+  it('rethrows InvalidParams when name is longer than one character', async () => {
+    const originalErr = new McpError(JsonRpcErrorCode.InvalidParams, 'Bad request');
+    mockService.searchPeople.mockRejectedValue(originalErr);
+    const ctx = createMockContext({ errors: searchPeople.errors });
+    const input = searchPeople.input.parse({ name: 'Smith' });
+    await expect(searchPeople.handler(input, ctx)).rejects.toBe(originalErr);
+  });
+
+  it('rethrows InvalidParams when no name is set', async () => {
+    const originalErr = new McpError(JsonRpcErrorCode.InvalidParams, 'Bad request');
+    mockService.searchPeople.mockRejectedValue(originalErr);
+    const ctx = createMockContext({ errors: searchPeople.errors });
+    const input = searchPeople.input.parse({ jurisdiction: 'wa' });
+    await expect(searchPeople.handler(input, ctx)).rejects.toBe(originalErr);
   });
 });

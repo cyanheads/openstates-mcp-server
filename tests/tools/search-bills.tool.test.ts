@@ -72,19 +72,31 @@ describe('searchBills', () => {
     });
   });
 
-  it('returns empty results with enrichment notice when no bills match', async () => {
+  it('returns empty results with enrichment notice when no bills match (no session filter)', async () => {
     mockService.searchBills.mockResolvedValue({
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
     });
     const ctx = createMockContext();
-    const input = searchBills.input.parse({ jurisdiction: 'wa', session: 'badSession' });
+    const input = searchBills.input.parse({ jurisdiction: 'wa' });
     const result = await searchBills.handler(input, ctx);
     expect(result.results).toHaveLength(0);
     const enrichment = getEnrichment(ctx);
     expect(enrichment.totalItems).toBe(0);
     expect(enrichment.notice).toBeDefined();
     expect(enrichment.notice).toContain('No bills matched');
+  });
+
+  it('throws invalid_session when session is set and results are empty', async () => {
+    mockService.searchBills.mockResolvedValue({
+      results: [],
+      pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
+    });
+    const ctx = createMockContext({ errors: searchBills.errors });
+    const input = searchBills.input.parse({ jurisdiction: 'wa', session: 'not-a-real-session' });
+    await expect(searchBills.handler(input, ctx)).rejects.toMatchObject({
+      data: { reason: 'invalid_session' },
+    });
   });
 
   it('includes sponsorships and actions when requested', async () => {

@@ -4,6 +4,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const PersonIncludeEnum = z.enum([
@@ -132,21 +133,44 @@ export const searchPeople = tool('openstates_search_people', {
       .optional()
       .describe('Recovery hint when results are empty. Absent when results are returned.'),
   },
+  errors: [
+    {
+      reason: 'name_too_short',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'The name filter is a single character and the API rejected the query as too short.',
+      recovery:
+        'Provide a name with at least two or three characters. Omit name entirely to search by jurisdiction, district, or org_classification alone.',
+    },
+  ],
 
   async handler(input, ctx) {
     const svc = getOpenStatesApiService();
-    const result = await svc.searchPeople(
-      {
-        jurisdiction: input.jurisdiction,
-        name: input.name,
-        org_classification: input.org_classification,
-        district: input.district,
-        include: input.include && input.include.length > 0 ? input.include : undefined,
-        page: input.page,
-        per_page: input.per_page,
-      },
-      ctx,
-    );
+    const result = await svc
+      .searchPeople(
+        {
+          jurisdiction: input.jurisdiction,
+          name: input.name,
+          org_classification: input.org_classification,
+          district: input.district,
+          include: input.include && input.include.length > 0 ? input.include : undefined,
+          page: input.page,
+          per_page: input.per_page,
+        },
+        ctx,
+      )
+      .catch((err: unknown) => {
+        if (
+          input.name &&
+          input.name.length <= 1 &&
+          err instanceof McpError &&
+          err.code === JsonRpcErrorCode.InvalidParams
+        ) {
+          throw ctx.fail('name_too_short', `Name filter "${input.name}" is too short.`, {
+            ...ctx.recoveryFor('name_too_short'),
+          });
+        }
+        throw err;
+      });
 
     ctx.log.info('Searched people', {
       jurisdiction: input.jurisdiction,
