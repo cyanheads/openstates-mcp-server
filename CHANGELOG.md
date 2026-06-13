@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.8](changelog/0.1.x/0.1.8.md) — 2026-06-12
+
+Adopt @cyanheads/mcp-ts-core ^0.10.6: canonical enrichment total, explicit display identity, MCPB bundle cleaner, anchored .mcpbignore
+
 ## [0.1.7](changelog/0.1.x/0.1.7.md) — 2026-06-04
 
 Structured errors for invalid session identifier and single-character name filter in search tools
