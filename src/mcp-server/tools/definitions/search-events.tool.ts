@@ -136,7 +136,7 @@ export const searchEvents = tool('openstates_search_events', {
   }),
 
   enrichment: {
-    totalItems: z.number().describe('Total events matching the query across all pages.'),
+    totalCount: z.number().describe('Total events matching the query across all pages.'),
     page: z.number().describe('Current page returned.'),
     maxPage: z.number().describe('Total pages available.'),
     coverageNote: z
@@ -171,8 +171,8 @@ export const searchEvents = tool('openstates_search_events', {
       total: result.pagination.total_items,
     });
 
+    ctx.enrich.total(result.pagination.total_items);
     ctx.enrich({
-      totalItems: result.pagination.total_items,
       page: result.pagination.page,
       maxPage: result.pagination.max_page,
       coverageNote:

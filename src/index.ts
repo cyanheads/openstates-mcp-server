@@ -25,6 +25,8 @@ import { searchPeople } from './mcp-server/tools/definitions/search-people.tool.
 import { initOpenStatesApiService } from './services/openstates/openstates-service.js';
 
 await createApp({
+  name: 'openstates-mcp-server',
+  title: 'openstates-mcp-server',
   tools: [
     searchBills,
     getBill,

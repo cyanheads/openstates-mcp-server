@@ -85,7 +85,7 @@ describe('searchPeople — filters forwarded to service', () => {
     const input = searchPeople.input.parse({ jurisdiction: 'wa', page: 3, per_page: 5 });
     await searchPeople.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
-    expect(enrichment.totalItems).toBe(40);
+    expect(enrichment.totalCount).toBe(40);
     expect(enrichment.page).toBe(3);
     expect(enrichment.maxPage).toBe(8);
   });

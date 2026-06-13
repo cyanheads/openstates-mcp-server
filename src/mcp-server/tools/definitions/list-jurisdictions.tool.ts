@@ -85,7 +85,7 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
   }),
 
   enrichment: {
-    totalItems: z.number().describe('Total jurisdictions matching the filter across all pages.'),
+    totalCount: z.number().describe('Total jurisdictions matching the filter across all pages.'),
     page: z.number().describe('Current page returned.'),
     maxPage: z.number().describe('Total pages available.'),
   },
@@ -106,8 +106,8 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
       count: result.results.length,
       total: result.pagination.total_items,
     });
+    ctx.enrich.total(result.pagination.total_items);
     ctx.enrich({
-      totalItems: result.pagination.total_items,
       page: result.pagination.page,
       maxPage: result.pagination.max_page,
     });

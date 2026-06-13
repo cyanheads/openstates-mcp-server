@@ -43,7 +43,7 @@ describe('listJurisdictions', () => {
     expect(result.results[0].name).toBe('Washington');
     expect(result.pagination.total_items).toBe(1);
     const enrichment = getEnrichment(ctx);
-    expect(enrichment.totalItems).toBe(1);
+    expect(enrichment.totalCount).toBe(1);
     expect(enrichment.page).toBe(1);
     expect(enrichment.maxPage).toBe(1);
   });

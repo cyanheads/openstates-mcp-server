@@ -71,7 +71,7 @@ describe('searchPeople', () => {
     const result = await searchPeople.handler(input, ctx);
     expect(result.results).toHaveLength(0);
     const enrichment = getEnrichment(ctx);
-    expect(enrichment.totalItems).toBe(0);
+    expect(enrichment.totalCount).toBe(0);
     expect(enrichment.notice).toBeDefined();
     expect(enrichment.notice).toContain('No legislators matched');
   });

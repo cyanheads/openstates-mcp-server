@@ -52,7 +52,7 @@ describe('searchBills', () => {
     expect(result.results[0].identifier).toBe('HB 1000');
     expect(result.pagination.total_items).toBe(1);
     const enrichment = getEnrichment(ctx);
-    expect(enrichment.totalItems).toBe(1);
+    expect(enrichment.totalCount).toBe(1);
     expect(enrichment.page).toBe(1);
     expect(enrichment.maxPage).toBe(1);
   });
@@ -82,7 +82,7 @@ describe('searchBills', () => {
     const result = await searchBills.handler(input, ctx);
     expect(result.results).toHaveLength(0);
     const enrichment = getEnrichment(ctx);
-    expect(enrichment.totalItems).toBe(0);
+    expect(enrichment.totalCount).toBe(0);
     expect(enrichment.notice).toBeDefined();
     expect(enrichment.notice).toContain('No bills matched');
   });

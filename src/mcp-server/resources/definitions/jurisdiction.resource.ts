@@ -8,6 +8,7 @@ import { notFound } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 export const jurisdictionResource = resource('openstates://jurisdiction/{jurisdiction_id}', {
+  name: 'openstates_jurisdiction',
   title: 'Jurisdiction Metadata',
   description:
     'Jurisdiction metadata including current sessions, coverage dates, and bill/people update timestamps. Use as stable reference context before querying bills or people — inject this to prime session identifiers without a tool call.',

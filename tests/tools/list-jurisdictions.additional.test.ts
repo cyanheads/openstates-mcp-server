@@ -86,7 +86,7 @@ describe('listJurisdictions — filters and pagination', () => {
     const input = listJurisdictions.input.parse({});
     await listJurisdictions.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
-    expect(enrichment.totalItems).toBe(52);
+    expect(enrichment.totalCount).toBe(52);
     expect(enrichment.page).toBe(1);
     expect(enrichment.maxPage).toBe(1);
   });
@@ -101,7 +101,7 @@ describe('listJurisdictions — filters and pagination', () => {
     const result = await listJurisdictions.handler(input, ctx);
     expect(result.results).toHaveLength(0);
     const enrichment = getEnrichment(ctx);
-    expect(enrichment.totalItems).toBe(0);
+    expect(enrichment.totalCount).toBe(0);
   });
 
   it('passes include=latest_runs to service', async () => {

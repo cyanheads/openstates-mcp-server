@@ -60,7 +60,7 @@ describe('searchBills — pagination and filters', () => {
     const input = searchBills.input.parse({ jurisdiction: 'wa', page: 2, per_page: 5 });
     await searchBills.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
-    expect(enrichment.totalItems).toBe(50);
+    expect(enrichment.totalCount).toBe(50);
     expect(enrichment.page).toBe(2);
     expect(enrichment.maxPage).toBe(10);
   });
