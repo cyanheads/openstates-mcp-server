@@ -1,5 +1,5 @@
 {
-  "name": "@cyanheads/openstates-mcp-server",
+  "name": "openstates-mcp-server",
   "version": "0.1.8",
   "description": "Search bills, legislators, committees, and events across all 50 US states, DC, and Puerto Rico via MCP. STDIO or Streamable HTTP.",
   "author": {
@@ -9,7 +9,7 @@
   "repository": "https://github.com/cyanheads/openstates-mcp-server",
   "license": "Apache-2.0",
   "mcpServers": {
-    "@cyanheads/openstates-mcp-server": {
+    "openstates-mcp-server": {
       "command": "npx",
       "args": ["-y", "@cyanheads/openstates-mcp-server"],
       "env": {
