@@ -1,6 +1,6 @@
 {
   "name": "openstates-mcp-server",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Search bills, legislators, committees, and events across all 50 US states, DC, and Puerto Rico via MCP. STDIO or Streamable HTTP.",
   "author": {
     "name": "cyanheads",
@@ -15,7 +15,7 @@
   "interface": {
     "displayName": "openstates-mcp-server",
     "shortDescription": "Search bills, legislators, committees, and events across all 50 US states, DC, and Puerto Rico via MCP.",
-    "longDescription": "",
+    "longDescription": "Query US state legislative data from Open States v3 across all 50 states, DC, and Puerto Rico. Search and fetch bills, legislators, committees, and events; resolve legislators by address; and discover jurisdictions and their legislative sessions. Bill and people searches support full-text queries, jurisdiction and session filters, and an include parameter to pull related data inline. A jurisdiction resource exposes session and coverage metadata; bill-research and legislator-profile prompts scaffold structured analysis. Runs over STDIO or Streamable HTTP and requires a free Open States API key.",
     "developerName": "cyanheads",
     "category": "",
     "capabilities": ["Read"],
