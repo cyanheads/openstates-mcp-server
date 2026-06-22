@@ -96,6 +96,23 @@ export const searchCommittees = tool('openstates_search_committees', {
       .describe(
         'Committee data is experimental — not all states have coverage in Open States. Empty results may indicate the state lacks data, not that no committees exist.',
       ),
+    appliedFilters: z
+      .object({
+        jurisdiction: z.string().optional().describe('Jurisdiction filter as received.'),
+        classification: z.string().optional().describe('Classification filter as received.'),
+        chamber: z.string().optional().describe('Chamber filter as received.'),
+        parent: z.string().optional().describe('Parent committee filter as received.'),
+        page: z.number().describe('Page number requested.'),
+        per_page: z.number().describe('Results per page requested.'),
+      })
+      .describe(
+        'Filters applied to this query as the server received them, for agent self-verification of zero or unexpected results.',
+      ),
+  },
+  enrichmentTrailer: {
+    appliedFilters: {
+      render: (v) => `Filters: ${JSON.stringify(v)}`,
+    },
   },
 
   async handler(input, ctx) {
@@ -125,6 +142,14 @@ export const searchCommittees = tool('openstates_search_committees', {
       maxPage: result.pagination.max_page,
       coverageNote:
         'Committee data is experimental — Open States is working to restore support and not all states have coverage. Empty results may indicate the state lacks data, not that no committees exist.',
+      appliedFilters: {
+        jurisdiction: input.jurisdiction,
+        classification: input.classification,
+        chamber: input.chamber,
+        parent: input.parent,
+        page: input.page,
+        per_page: input.per_page,
+      },
     });
 
     return { results: result.results, pagination: result.pagination };

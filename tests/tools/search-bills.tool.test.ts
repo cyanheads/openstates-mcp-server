@@ -215,4 +215,58 @@ describe('searchBills', () => {
     expect(text).toContain('ocd-bill/sparse');
     expect(text).toContain('SB 5');
   });
+
+  it('echoes applied filters in enrichment for self-verification', async () => {
+    const ctx = createMockContext();
+    const input = searchBills.input.parse({
+      jurisdiction: 'wa',
+      session: '2025-2026',
+      chamber: 'lower',
+      action_since: '2025-01-01',
+      per_page: 5,
+    });
+    await searchBills.handler(input, ctx);
+    expect(getEnrichment(ctx).appliedFilters).toMatchObject({
+      jurisdiction: 'wa',
+      session: '2025-2026',
+      chamber: 'lower',
+      action_since: '2025-01-01',
+      sort: 'updated_desc',
+      page: 1,
+      per_page: 5,
+    });
+  });
+
+  it('echoes applied filters even when results are empty', async () => {
+    mockService.searchBills.mockResolvedValue({
+      results: [],
+      pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
+    });
+    const ctx = createMockContext();
+    const input = searchBills.input.parse({ jurisdiction: 'wa', q: 'budget' });
+    await searchBills.handler(input, ctx);
+    expect(getEnrichment(ctx).appliedFilters).toMatchObject({ jurisdiction: 'wa', q: 'budget' });
+  });
+
+  it('accepts ISO 8601 date-only and datetime for date filters', () => {
+    expect(() =>
+      searchBills.input.parse({ jurisdiction: 'wa', action_since: '2025-01-01' }),
+    ).not.toThrow();
+    expect(() =>
+      searchBills.input.parse({ jurisdiction: 'wa', updated_since: '2025-01-01T00:00:00Z' }),
+    ).not.toThrow();
+  });
+
+  it('rejects an empty-string date filter', () => {
+    expect(() => searchBills.input.parse({ jurisdiction: 'wa', action_since: '' })).toThrow();
+  });
+
+  it('rejects malformed date filters before the API call', () => {
+    expect(() =>
+      searchBills.input.parse({ jurisdiction: 'wa', action_since: 'yesterday' }),
+    ).toThrow();
+    expect(() =>
+      searchBills.input.parse({ jurisdiction: 'wa', updated_since: '05/30/2026' }),
+    ).toThrow();
+  });
 });

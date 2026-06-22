@@ -29,6 +29,11 @@ const BillSortEnum = z.enum([
   'latest_action_desc',
 ]);
 
+/** Loose ISO 8601 — date-only or datetime, both accepted by the Open States API. */
+const isoDateRegex = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/;
+const isoDateMessage =
+  'Must be an ISO 8601 date or datetime (e.g., "2025-01-01" or "2025-01-01T00:00:00Z").';
+
 export const searchBills = tool('openstates_search_bills', {
   title: 'Search Bills',
   description:
@@ -75,12 +80,16 @@ export const searchBills = tool('openstates_search_bills', {
     ),
     action_since: z
       .string()
+      .regex(isoDateRegex, isoDateMessage)
       .optional()
-      .describe('ISO 8601 date — only return bills with an action after this date.'),
+      .describe(
+        'ISO 8601 date — only return bills with an action after this date (e.g., "2025-01-01").',
+      ),
     updated_since: z
       .string()
+      .regex(isoDateRegex, isoDateMessage)
       .optional()
-      .describe('ISO 8601 date — only return bills updated after this date.'),
+      .describe('ISO 8601 date — only return bills updated after this date (e.g., "2025-01-01").'),
     include: z
       .array(BillIncludeEnum)
       .optional()
@@ -200,6 +209,27 @@ export const searchBills = tool('openstates_search_bills', {
       .describe(
         'Recovery hint when results are empty — echoes the filters applied and suggests how to broaden. Absent when results are returned.',
       ),
+    appliedFilters: z
+      .object({
+        jurisdiction: z.string().optional().describe('Jurisdiction filter as received.'),
+        q: z.string().optional().describe('Full-text query as received.'),
+        session: z.string().optional().describe('Session filter as received.'),
+        chamber: z.string().optional().describe('Chamber filter as received.'),
+        classification: z.string().optional().describe('Classification filter as received.'),
+        action_since: z.string().optional().describe('action_since date filter as received.'),
+        updated_since: z.string().optional().describe('updated_since date filter as received.'),
+        sort: z.string().describe('Sort order applied.'),
+        page: z.number().describe('Page number requested.'),
+        per_page: z.number().describe('Results per page requested.'),
+      })
+      .describe(
+        'Filters applied to this query as the server received them, for agent self-verification of zero or unexpected results.',
+      ),
+  },
+  enrichmentTrailer: {
+    appliedFilters: {
+      render: (v) => `Filters: ${JSON.stringify(v)}`,
+    },
   },
   errors: [
     {
@@ -257,6 +287,18 @@ export const searchBills = tool('openstates_search_bills', {
     ctx.enrich({
       page: result.pagination.page,
       maxPage: result.pagination.max_page,
+      appliedFilters: {
+        jurisdiction: input.jurisdiction,
+        q: input.q,
+        session: input.session,
+        chamber: input.chamber,
+        classification: input.classification,
+        action_since: input.action_since,
+        updated_since: input.updated_since,
+        sort: input.sort,
+        page: input.page,
+        per_page: input.per_page,
+      },
     });
 
     if (result.results.length === 0) {

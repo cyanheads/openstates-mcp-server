@@ -132,6 +132,23 @@ export const searchPeople = tool('openstates_search_people', {
       .string()
       .optional()
       .describe('Recovery hint when results are empty. Absent when results are returned.'),
+    appliedFilters: z
+      .object({
+        jurisdiction: z.string().optional().describe('Jurisdiction filter as received.'),
+        name: z.string().optional().describe('Name filter as received.'),
+        org_classification: z.string().optional().describe('Role-type filter as received.'),
+        district: z.string().optional().describe('District filter as received.'),
+        page: z.number().describe('Page number requested.'),
+        per_page: z.number().describe('Results per page requested.'),
+      })
+      .describe(
+        'Filters applied to this query as the server received them, for agent self-verification of zero or unexpected results.',
+      ),
+  },
+  enrichmentTrailer: {
+    appliedFilters: {
+      render: (v) => `Filters: ${JSON.stringify(v)}`,
+    },
   },
   errors: [
     {
@@ -182,6 +199,14 @@ export const searchPeople = tool('openstates_search_people', {
     ctx.enrich({
       page: result.pagination.page,
       maxPage: result.pagination.max_page,
+      appliedFilters: {
+        jurisdiction: input.jurisdiction,
+        name: input.name,
+        org_classification: input.org_classification,
+        district: input.district,
+        page: input.page,
+        per_page: input.per_page,
+      },
     });
 
     if (result.results.length === 0) {

@@ -150,4 +150,23 @@ describe('searchPeople', () => {
     // Should not throw on null current_role
     expect(text).toContain('ocd-person/abc123');
   });
+
+  it('echoes applied filters in enrichment for self-verification', async () => {
+    const ctx = createMockContext();
+    const input = searchPeople.input.parse({
+      jurisdiction: 'wa',
+      name: 'Smith',
+      org_classification: 'upper',
+      district: '37',
+    });
+    await searchPeople.handler(input, ctx);
+    expect(getEnrichment(ctx).appliedFilters).toMatchObject({
+      jurisdiction: 'wa',
+      name: 'Smith',
+      org_classification: 'upper',
+      district: '37',
+      page: 1,
+      per_page: 10,
+    });
+  });
 });

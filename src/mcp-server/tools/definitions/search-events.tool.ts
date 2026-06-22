@@ -15,6 +15,11 @@ const EventIncludeEnum = z.enum([
   'agenda',
 ]);
 
+/** Loose ISO 8601 — date-only or datetime, both accepted by the Open States API. */
+const isoDateRegex = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/;
+const isoDateMessage =
+  'Must be an ISO 8601 date or datetime (e.g., "2025-01-01" or "2025-01-01T00:00:00Z").';
+
 export const searchEvents = tool('openstates_search_events', {
   title: 'Search Events',
   description:
@@ -27,11 +32,16 @@ export const searchEvents = tool('openstates_search_events', {
       .describe('State name, abbreviation, or OCD-ID. Omitting searches across all states.'),
     after: z
       .string()
+      .regex(isoDateRegex, isoDateMessage)
       .optional()
       .describe(
         'ISO 8601 datetime — events starting after this time. Use to find upcoming hearings.',
       ),
-    before: z.string().optional().describe('ISO 8601 datetime — events starting before this time.'),
+    before: z
+      .string()
+      .regex(isoDateRegex, isoDateMessage)
+      .optional()
+      .describe('ISO 8601 datetime — events starting before this time.'),
     require_bills: z
       .boolean()
       .default(false)
@@ -148,6 +158,23 @@ export const searchEvents = tool('openstates_search_events', {
       .string()
       .optional()
       .describe('Recovery hint when results are empty. Absent when results are returned.'),
+    appliedFilters: z
+      .object({
+        jurisdiction: z.string().optional().describe('Jurisdiction filter as received.'),
+        after: z.string().optional().describe('after datetime filter as received.'),
+        before: z.string().optional().describe('before datetime filter as received.'),
+        require_bills: z.boolean().describe('require_bills flag as received.'),
+        page: z.number().describe('Page number requested.'),
+        per_page: z.number().describe('Results per page requested.'),
+      })
+      .describe(
+        'Filters applied to this query as the server received them, for agent self-verification of zero or unexpected results.',
+      ),
+  },
+  enrichmentTrailer: {
+    appliedFilters: {
+      render: (v) => `Filters: ${JSON.stringify(v)}`,
+    },
   },
 
   async handler(input, ctx) {
@@ -177,6 +204,14 @@ export const searchEvents = tool('openstates_search_events', {
       maxPage: result.pagination.max_page,
       coverageNote:
         'Event data is experimental — most states do not publish event data to Open States. Empty results may indicate the state lacks data, not that no events occurred.',
+      appliedFilters: {
+        jurisdiction: input.jurisdiction,
+        after: input.after,
+        before: input.before,
+        require_bills: input.require_bills,
+        page: input.page,
+        per_page: input.per_page,
+      },
     });
 
     if (result.results.length === 0) {

@@ -112,4 +112,21 @@ describe('searchCommittees', () => {
     expect(text).toContain('chair');
     expect(text).toContain('ocd-person/abc');
   });
+
+  it('echoes applied filters in enrichment for self-verification', async () => {
+    const ctx = createMockContext();
+    const input = searchCommittees.input.parse({
+      jurisdiction: 'wa',
+      classification: 'subcommittee',
+      chamber: 'upper',
+    });
+    await searchCommittees.handler(input, ctx);
+    expect(getEnrichment(ctx).appliedFilters).toMatchObject({
+      jurisdiction: 'wa',
+      classification: 'subcommittee',
+      chamber: 'upper',
+      page: 1,
+      per_page: 10,
+    });
+  });
 });

@@ -149,4 +149,37 @@ describe('searchEvents', () => {
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('0 events');
   });
+
+  it('echoes applied filters in enrichment for self-verification', async () => {
+    const ctx = createMockContext();
+    const input = searchEvents.input.parse({
+      jurisdiction: 'wa',
+      after: '2025-03-01',
+      before: '2025-04-01',
+      require_bills: true,
+    });
+    await searchEvents.handler(input, ctx);
+    expect(getEnrichment(ctx).appliedFilters).toMatchObject({
+      jurisdiction: 'wa',
+      after: '2025-03-01',
+      before: '2025-04-01',
+      require_bills: true,
+      page: 1,
+      per_page: 10,
+    });
+  });
+
+  it('accepts ISO 8601 date-only and datetime for after/before', () => {
+    expect(() =>
+      searchEvents.input.parse({ jurisdiction: 'wa', after: '2025-03-01' }),
+    ).not.toThrow();
+    expect(() =>
+      searchEvents.input.parse({ jurisdiction: 'wa', before: '2025-04-01T00:00:00Z' }),
+    ).not.toThrow();
+  });
+
+  it('rejects malformed date filters before the API call', () => {
+    expect(() => searchEvents.input.parse({ jurisdiction: 'wa', after: 'next week' })).toThrow();
+    expect(() => searchEvents.input.parse({ jurisdiction: 'wa', before: '04/01/2025' })).toThrow();
+  });
 });
