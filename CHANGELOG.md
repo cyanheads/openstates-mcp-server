@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.10](changelog/0.1.x/0.1.10.md) — 2026-06-21
+
+Search tools echo their applied filters in the enrichment block, and date filters validate ISO 8601 format before the API call.
+
 ## [0.1.9](changelog/0.1.x/0.1.9.md) — 2026-06-20
 
 Adopt @cyanheads/mcp-ts-core ^0.10.9: floating-specifier and plugin-manifest devcheck guards, fresh-scaffold check resilience, .codex-plugin long description
