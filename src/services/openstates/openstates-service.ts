@@ -12,6 +12,7 @@ import type {
   Bill,
   BillListResponse,
   BillSearchParams,
+  Chamber,
   Committee,
   CommitteeListResponse,
   CommitteeSearchParams,
@@ -93,7 +94,7 @@ export class OpenStatesApiService {
     return url.toString();
   }
 
-  private async fetchJson<T>(url: string, ctx: Context): Promise<T> {
+  private fetchJson<T>(url: string, ctx: Context): Promise<T> {
     return withRetry(
       async () => {
         const response = await fetch(url, {
@@ -133,7 +134,7 @@ export class OpenStatesApiService {
 
   // --- Bills ---
 
-  async searchBills(params: BillSearchParams, ctx: Context): Promise<BillListResponse> {
+  searchBills(params: BillSearchParams, ctx: Context): Promise<BillListResponse> {
     const queryParams: Record<string, unknown> = {
       jurisdiction: params.jurisdiction,
       q: params.q,
@@ -146,6 +147,7 @@ export class OpenStatesApiService {
       sort: params.sort,
       action_since: params.action_since,
       updated_since: params.updated_since,
+      created_since: params.created_since,
       include: params.include,
       page: params.page ?? 1,
       per_page: params.per_page ?? 10,
@@ -155,7 +157,7 @@ export class OpenStatesApiService {
     return this.fetchJson<BillListResponse>(url, ctx);
   }
 
-  async getBillByPath(
+  getBillByPath(
     jurisdiction: string,
     session: string,
     billId: string,
@@ -172,11 +174,7 @@ export class OpenStatesApiService {
     return this.fetchJson<Bill>(url, ctx);
   }
 
-  async getBillById(
-    openstatesId: string,
-    include: string[] | undefined,
-    ctx: Context,
-  ): Promise<Bill> {
+  getBillById(openstatesId: string, include: string[] | undefined, ctx: Context): Promise<Bill> {
     // OCD bill IDs are like "ocd-bill/..." — strip the prefix for URL routing
     // The API accepts the full OCD ID in the path
     const url = this.buildUrl(`/bills/${openstatesId}`, { include });
@@ -186,7 +184,24 @@ export class OpenStatesApiService {
 
   // --- People ---
 
-  async searchPeople(params: PeopleSearchParams, ctx: Context): Promise<PersonListResponse> {
+  /**
+   * `org_classification=legislature` is in the upstream enum and is accepted input, but it
+   * is never any *person's* current role — only `upper`/`lower` (chambers) and `executive`
+   * (individual officials) are — so upstream matches nobody and returns an empty set. The
+   * legislature is the union of the two chambers, resolved here; every other classification
+   * passes through as a single upstream query.
+   */
+  searchPeople(params: PeopleSearchParams, ctx: Context): Promise<PersonListResponse> {
+    return params.org_classification === 'legislature'
+      ? this.searchLegislature(params, ctx)
+      : this.fetchPeoplePage(params, ctx);
+  }
+
+  /** One upstream `/people` page, normalized. */
+  private async fetchPeoplePage(
+    params: PeopleSearchParams,
+    ctx: Context,
+  ): Promise<PersonListResponse> {
     const queryParams: Record<string, unknown> = {
       jurisdiction: params.jurisdiction,
       name: params.name,
@@ -197,7 +212,11 @@ export class OpenStatesApiService {
       per_page: params.per_page ?? 10,
     };
     const url = this.buildUrl('/people', queryParams);
-    ctx.log.debug('Searching people', { jurisdiction: params.jurisdiction });
+    ctx.log.debug('Searching people', {
+      jurisdiction: params.jurisdiction,
+      org_classification: params.org_classification,
+      page: params.page ?? 1,
+    });
     const raw = await this.fetchJson<{
       results: RawPerson[];
       pagination: PersonListResponse['pagination'];
@@ -205,6 +224,116 @@ export class OpenStatesApiService {
     return {
       results: raw.results.map(normalizePerson),
       pagination: raw.pagination,
+    };
+  }
+
+  /**
+   * Records `[start, start + count)` of one chamber, mapped onto the upstream's page-based
+   * pagination. `head` is that chamber's page 1 at the same `per_page`, reused whenever the
+   * range reaches into it.
+   *
+   * Upstream 404s (`invalid page, must be in [1, N]`) for any page above a chamber's
+   * `max_page`, so the range is clamped to `head`'s `total_items` before any page number is
+   * derived — every request this issues is inside the legal range by construction.
+   */
+  private async fetchChamberRange(
+    params: PeopleSearchParams,
+    chamber: Chamber,
+    head: PersonListResponse,
+    start: number,
+    count: number,
+    ctx: Context,
+  ): Promise<Person[]> {
+    const { per_page: perPage, total_items: total } = head.pagination;
+    const end = Math.min(start + count, total);
+    if (end <= start) return [];
+
+    const firstPage = Math.floor(start / perPage) + 1;
+    const lastPage = Math.floor((end - 1) / perPage) + 1;
+    const requests: Promise<PersonListResponse>[] = [];
+    for (let page = firstPage; page <= lastPage; page++) {
+      requests.push(
+        page === 1
+          ? Promise.resolve(head)
+          : this.fetchPeoplePage(
+              { ...params, org_classification: chamber, page, per_page: perPage },
+              ctx,
+            ),
+      );
+    }
+    const fetched = (await Promise.all(requests)).flatMap((res) => res.results);
+    const firstIndex = (firstPage - 1) * perPage;
+    return fetched.slice(start - firstIndex, end - firstIndex);
+  }
+
+  /**
+   * The `legislature` union: every `upper` member followed by every `lower` member, sliced to
+   * the caller's page.
+   *
+   * Page 1 of each chamber is the only request that is legal before the chamber's size is
+   * known, and it doubles as the head of the union — so both are fetched up front, and their
+   * `total_items` bound every page request that follows. The caller's window is then sliced
+   * out of the *merged* set: once it runs past `upper`, it reads into `lower` at the offset
+   * the merge has actually reached. Threading the caller's offset into each chamber query
+   * instead would skip that many records in both and silently drop legislators.
+   *
+   * Costs two upstream calls for the common first page, at most four for a deep one — never a
+   * full drain of either chamber.
+   */
+  private async searchLegislature(
+    params: PeopleSearchParams,
+    ctx: Context,
+  ): Promise<PersonListResponse> {
+    const perPage = params.per_page ?? 10;
+    const page = params.page ?? 1;
+    const offset = (page - 1) * perPage;
+
+    const [upperHead, lowerHead] = await Promise.all([
+      this.fetchPeoplePage(
+        { ...params, org_classification: 'upper', page: 1, per_page: perPage },
+        ctx,
+      ),
+      this.fetchPeoplePage(
+        { ...params, org_classification: 'lower', page: 1, per_page: perPage },
+        ctx,
+      ),
+    ]);
+    const upperTotal = upperHead.pagination.total_items;
+    const lowerTotal = lowerHead.pagination.total_items;
+
+    const upperSlice = await this.fetchChamberRange(
+      params,
+      'upper',
+      upperHead,
+      offset,
+      perPage,
+      ctx,
+    );
+    const lowerSlice = await this.fetchChamberRange(
+      params,
+      'lower',
+      lowerHead,
+      Math.max(0, offset - upperTotal),
+      perPage - upperSlice.length,
+      ctx,
+    );
+
+    const totalItems = upperTotal + lowerTotal;
+    ctx.log.debug('Merged legislature union', {
+      jurisdiction: params.jurisdiction,
+      upperTotal,
+      lowerTotal,
+      returned: upperSlice.length + lowerSlice.length,
+    });
+
+    return {
+      results: [...upperSlice, ...lowerSlice],
+      pagination: {
+        page,
+        per_page: perPage,
+        max_page: Math.max(1, Math.ceil(totalItems / perPage)),
+        total_items: totalItems,
+      },
     };
   }
 
@@ -273,7 +402,7 @@ export class OpenStatesApiService {
 
   // --- Events ---
 
-  async searchEvents(params: EventSearchParams, ctx: Context): Promise<EventListResponse> {
+  searchEvents(params: EventSearchParams, ctx: Context): Promise<EventListResponse> {
     const queryParams: Record<string, unknown> = {
       jurisdiction: params.jurisdiction,
       after: params.after,
@@ -288,7 +417,7 @@ export class OpenStatesApiService {
     return this.fetchJson<EventListResponse>(url, ctx);
   }
 
-  async getEvent(eventId: string, include: string[] | undefined, ctx: Context): Promise<Event> {
+  getEvent(eventId: string, include: string[] | undefined, ctx: Context): Promise<Event> {
     const url = this.buildUrl(`/events/${encodeURIComponent(eventId)}`, { include });
     ctx.log.debug('Fetching event', { eventId });
     return this.fetchJson<Event>(url, ctx);
@@ -296,7 +425,7 @@ export class OpenStatesApiService {
 
   // --- Jurisdictions ---
 
-  async listJurisdictions(
+  listJurisdictions(
     params: JurisdictionListParams,
     ctx: Context,
   ): Promise<JurisdictionListResponse> {
@@ -311,7 +440,7 @@ export class OpenStatesApiService {
     return this.fetchJson<JurisdictionListResponse>(url, ctx);
   }
 
-  async getJurisdiction(
+  getJurisdiction(
     jurisdictionId: string,
     include: string[] | undefined,
     ctx: Context,

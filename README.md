@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.10-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openstates-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/openstates-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openstates-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.1.10-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openstates-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/openstates-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openstates-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -48,7 +48,7 @@ Search state legislative bills with rich filtering and inline related data.
 - Filter by jurisdiction (state name, two-letter abbreviation, or OCD-ID), session, chamber, classification, subject tags, and sponsor
 - Sort by latest action, first action, or update time — use `sort=latest_action_desc` for bills currently moving through the legislature
 - `include` parameter requests sponsorships, actions, votes, abstracts, versions, and related bills inline — eliminates follow-up `openstates_get_bill` calls for most research workflows
-- `action_since` and `updated_since` date filters for change-tracking
+- `action_since`, `updated_since`, and `created_since` date filters for change-tracking
 - Pagination up to 20 results per page
 - Empty-result recovery: echoes applied filters and suggests how to broaden
 
@@ -71,7 +71,8 @@ Fetch complete bill detail by OCD ID or path lookup.
 Search legislators and officials by name, jurisdiction, chamber, or district.
 
 - Case-insensitive substring matching on name
-- `org_classification` targets a specific chamber: `upper` (Senate), `lower` (House/Assembly), `legislature` (all), `executive` (governors and executive officials)
+- `org_classification` targets a role type: `upper` (Senate), `lower` (House/Assembly), `executive` (governors and executive officials), `legislature` (every legislator — both chambers merged into one paginated set, all upper members then all lower)
+- Omitting `org_classification` is not equivalent to `legislature` — it returns every officeholder, executive officials included
 - `include=offices` returns phone, fax, and mailing address
 - `include=links` returns website and social media links
 - Strongly recommended to provide `jurisdiction` — omitting it returns legislators across all states

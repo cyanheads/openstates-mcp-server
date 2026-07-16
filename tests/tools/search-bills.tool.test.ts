@@ -87,16 +87,29 @@ describe('searchBills', () => {
     expect(enrichment.notice).toContain('No bills matched');
   });
 
-  it('throws invalid_session when session is set and results are empty', async () => {
+  /**
+   * The Open States /bills endpoint does not validate `session` against the
+   * jurisdiction: a valid session with zero matches and an unrecognized session
+   * both return 200 with total_items: 0. Result count cannot tell them apart, so
+   * an empty session-filtered result is a notice, never a throw.
+   */
+  it('returns empty results with a notice naming the session filter, rather than throwing', async () => {
     mockService.searchBills.mockResolvedValue({
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
     });
     const ctx = createMockContext({ errors: searchBills.errors });
-    const input = searchBills.input.parse({ jurisdiction: 'wa', session: 'not-a-real-session' });
-    await expect(searchBills.handler(input, ctx)).rejects.toMatchObject({
-      data: { reason: 'invalid_session' },
+    const input = searchBills.input.parse({
+      jurisdiction: 'wa',
+      session: '2025-2026',
+      q: 'zzqqxxnomatch12345',
     });
+    const result = await searchBills.handler(input, ctx);
+    expect(result.results).toHaveLength(0);
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.totalCount).toBe(0);
+    expect(enrichment.notice).toContain('session="2025-2026"');
+    expect(enrichment.notice).toContain('openstates_get_jurisdiction');
   });
 
   it('includes sponsorships and actions when requested', async () => {
@@ -223,6 +236,7 @@ describe('searchBills', () => {
       session: '2025-2026',
       chamber: 'lower',
       action_since: '2025-01-01',
+      created_since: '2025-02-01',
       per_page: 5,
     });
     await searchBills.handler(input, ctx);
@@ -231,6 +245,7 @@ describe('searchBills', () => {
       session: '2025-2026',
       chamber: 'lower',
       action_since: '2025-01-01',
+      created_since: '2025-02-01',
       sort: 'updated_desc',
       page: 1,
       per_page: 5,
@@ -267,6 +282,9 @@ describe('searchBills', () => {
     ).toThrow();
     expect(() =>
       searchBills.input.parse({ jurisdiction: 'wa', updated_since: '05/30/2026' }),
+    ).toThrow();
+    expect(() =>
+      searchBills.input.parse({ jurisdiction: 'wa', created_since: 'last month' }),
     ).toThrow();
   });
 });

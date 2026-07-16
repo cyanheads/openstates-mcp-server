@@ -4,7 +4,6 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const PersonIncludeEnum = z.enum([
@@ -18,7 +17,7 @@ const PersonIncludeEnum = z.enum([
 export const searchPeople = tool('openstates_search_people', {
   title: 'Search People',
   description:
-    'Search state legislators and officials by name, jurisdiction, chamber, district, or party. Supports name substring matching (case-insensitive). org_classification targets a specific chamber: "upper" for Senate, "lower" for House/Assembly, "legislature" for all legislators, "executive" for governors and executive officials. include=offices adds phone, fax, and address. include=links adds website and social links. Omitting jurisdiction searches across all states and may return a large result set.',
+    'Search state legislators and officials by name, jurisdiction, chamber, district, or party. Supports name substring matching (case-insensitive). org_classification targets a role type: "upper" for Senate, "lower" for House/Assembly, "executive" for governors and executive officials, and "legislature" for every legislator — both chambers merged into one paginated set (all upper members, then all lower), which excludes executive-branch officials. Omitting org_classification is not the same as "legislature": it returns every officeholder, executive officials included. include=offices adds phone, fax, and address. include=links adds website and social links. Omitting jurisdiction searches across all states and may return a large result set.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
     jurisdiction: z
@@ -33,7 +32,7 @@ export const searchPeople = tool('openstates_search_people', {
       .enum(['legislature', 'executive', 'lower', 'upper', 'government'])
       .optional()
       .describe(
-        'Filter by role type. "upper" = Senate, "lower" = House/Assembly, "legislature" = all legislators, "executive" = governors and executive officials.',
+        'Filter by role type. "upper" = Senate, "lower" = House/Assembly, "executive" = governors and executive officials, "legislature" = every legislator (both chambers merged into one paginated set, all upper members then all lower, excluding executive officials). Omitting this filter returns every officeholder including executive ones — it is not equivalent to "legislature".',
       ),
     district: z
       .string()
@@ -150,44 +149,21 @@ export const searchPeople = tool('openstates_search_people', {
       render: (v) => `Filters: ${JSON.stringify(v)}`,
     },
   },
-  errors: [
-    {
-      reason: 'name_too_short',
-      code: JsonRpcErrorCode.ValidationError,
-      when: 'The name filter is a single character and the API rejected the query as too short.',
-      recovery:
-        'Provide a name with at least two or three characters. Omit name entirely to search by jurisdiction, district, or org_classification alone.',
-    },
-  ],
 
   async handler(input, ctx) {
     const svc = getOpenStatesApiService();
-    const result = await svc
-      .searchPeople(
-        {
-          jurisdiction: input.jurisdiction,
-          name: input.name,
-          org_classification: input.org_classification,
-          district: input.district,
-          include: input.include && input.include.length > 0 ? input.include : undefined,
-          page: input.page,
-          per_page: input.per_page,
-        },
-        ctx,
-      )
-      .catch((err: unknown) => {
-        if (
-          input.name &&
-          input.name.length <= 1 &&
-          err instanceof McpError &&
-          err.code === JsonRpcErrorCode.InvalidParams
-        ) {
-          throw ctx.fail('name_too_short', `Name filter "${input.name}" is too short.`, {
-            ...ctx.recoveryFor('name_too_short'),
-          });
-        }
-        throw err;
-      });
+    const result = await svc.searchPeople(
+      {
+        jurisdiction: input.jurisdiction,
+        name: input.name,
+        org_classification: input.org_classification,
+        district: input.district,
+        include: input.include && input.include.length > 0 ? input.include : undefined,
+        page: input.page,
+        per_page: input.per_page,
+      },
+      ctx,
+    );
 
     ctx.log.info('Searched people', {
       jurisdiction: input.jurisdiction,

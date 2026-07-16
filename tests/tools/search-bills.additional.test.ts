@@ -144,8 +144,7 @@ describe('searchBills — sort and chamber filters', () => {
     const enrichment = getEnrichment(ctx);
     expect(enrichment.notice).toBeDefined();
     expect(enrichment.notice).toContain('jurisdiction="wa"');
-    // chamber filter is not currently included in the notice
-    // but the notice itself should mention broadening
+    expect(enrichment.notice).toContain('chamber="upper"');
     expect(enrichment.notice).toContain('broadening');
   });
 });
@@ -222,6 +221,19 @@ describe('searchBills — subject and sponsor filters', () => {
     await searchBills.handler(input, ctx);
     expect(mockService.searchBills).toHaveBeenCalledWith(
       expect.objectContaining({ updated_since: '2025-03-01' }),
+      expect.anything(),
+    );
+  });
+
+  it('passes created_since filter to service', async () => {
+    const ctx = createMockContext();
+    const input = searchBills.input.parse({
+      jurisdiction: 'wa',
+      created_since: '2025-01-01',
+    });
+    await searchBills.handler(input, ctx);
+    expect(mockService.searchBills).toHaveBeenCalledWith(
+      expect.objectContaining({ created_since: '2025-01-01' }),
       expect.anything(),
     );
   });

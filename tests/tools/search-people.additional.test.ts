@@ -66,6 +66,32 @@ describe('searchPeople — filters forwarded to service', () => {
     );
   });
 
+  it('keeps legislature in the enum and forwards it for the service to resolve', async () => {
+    const ctx = createMockContext();
+    const input = searchPeople.input.parse({
+      jurisdiction: 'wa',
+      org_classification: 'legislature',
+    });
+    await searchPeople.handler(input, ctx);
+    expect(mockService.searchPeople).toHaveBeenCalledWith(
+      expect.objectContaining({ org_classification: 'legislature' }),
+      expect.anything(),
+    );
+  });
+
+  it('echoes legislature back as the applied filter, not the chambers it resolved to', async () => {
+    const ctx = createMockContext();
+    const input = searchPeople.input.parse({
+      jurisdiction: 'wa',
+      org_classification: 'legislature',
+    });
+    await searchPeople.handler(input, ctx);
+    expect(getEnrichment(ctx).appliedFilters).toMatchObject({
+      jurisdiction: 'wa',
+      org_classification: 'legislature',
+    });
+  });
+
   it('passes page and per_page to service', async () => {
     const ctx = createMockContext();
     const input = searchPeople.input.parse({ jurisdiction: 'wa', page: 2, per_page: 5 });
@@ -201,7 +227,13 @@ describe('searchPeople — format edge cases', () => {
   });
 });
 
-describe('searchPeople — name_too_short error contract', () => {
+/**
+ * The Open States /people endpoint enforces no minimum name length — GET
+ * /people?name=a returns 200 with tens of thousands of matches. The handler
+ * therefore intercepts nothing: every upstream error reaches the caller as-is,
+ * including the InvalidParams that a short name was once assumed to produce.
+ */
+describe('searchPeople — upstream errors bubble unchanged', () => {
   let mockService: { searchPeople: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
@@ -210,38 +242,19 @@ describe('searchPeople — name_too_short error contract', () => {
     vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
   });
 
-  it('throws name_too_short when API returns InvalidParams for a single-character name', async () => {
-    mockService.searchPeople.mockRejectedValue(
-      new McpError(JsonRpcErrorCode.InvalidParams, 'Bad request'),
-    );
-    const ctx = createMockContext({ errors: searchPeople.errors });
-    const input = searchPeople.input.parse({ name: 'J' });
-    await expect(searchPeople.handler(input, ctx)).rejects.toMatchObject({
-      data: { reason: 'name_too_short' },
-    });
+  it('bubbles InvalidParams unchanged for a single-character name', async () => {
+    const originalErr = new McpError(JsonRpcErrorCode.InvalidParams, 'Bad request');
+    mockService.searchPeople.mockRejectedValue(originalErr);
+    const ctx = createMockContext();
+    const input = searchPeople.input.parse({ name: 'a' });
+    await expect(searchPeople.handler(input, ctx)).rejects.toBe(originalErr);
   });
 
-  it('rethrows non-InvalidParams errors unchanged', async () => {
+  it('bubbles a non-InvalidParams error unchanged', async () => {
     const originalErr = new McpError(JsonRpcErrorCode.ServiceUnavailable, 'API down');
     mockService.searchPeople.mockRejectedValue(originalErr);
-    const ctx = createMockContext({ errors: searchPeople.errors });
+    const ctx = createMockContext();
     const input = searchPeople.input.parse({ name: 'J' });
-    await expect(searchPeople.handler(input, ctx)).rejects.toBe(originalErr);
-  });
-
-  it('rethrows InvalidParams when name is longer than one character', async () => {
-    const originalErr = new McpError(JsonRpcErrorCode.InvalidParams, 'Bad request');
-    mockService.searchPeople.mockRejectedValue(originalErr);
-    const ctx = createMockContext({ errors: searchPeople.errors });
-    const input = searchPeople.input.parse({ name: 'Smith' });
-    await expect(searchPeople.handler(input, ctx)).rejects.toBe(originalErr);
-  });
-
-  it('rethrows InvalidParams when no name is set', async () => {
-    const originalErr = new McpError(JsonRpcErrorCode.InvalidParams, 'Bad request');
-    mockService.searchPeople.mockRejectedValue(originalErr);
-    const ctx = createMockContext({ errors: searchPeople.errors });
-    const input = searchPeople.input.parse({ jurisdiction: 'wa' });
     await expect(searchPeople.handler(input, ctx)).rejects.toBe(originalErr);
   });
 });

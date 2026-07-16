@@ -119,6 +119,7 @@ The primary entry point. Supports both full-text and structured filtering.
 | `sort` | `z.enum(['updated_asc', 'updated_desc', 'first_action_asc', 'first_action_desc', 'latest_action_asc', 'latest_action_desc'])` default `updated_desc` | Sort order. Use `latest_action_desc` for "what's moving now." |
 | `action_since` | `string` optional | ISO 8601 date — only bills with an action after this date. |
 | `updated_since` | `string` optional | ISO 8601 date — only bills updated after this date. |
+| `created_since` | `string` optional | ISO 8601 date — only bills first entered in Open States after this date. Finds newly-introduced bills, as opposed to recently-updated or recently-acted-on. |
 | `include` | `array(z.enum(['sponsorships', 'abstracts', 'other_titles', 'other_identifiers', 'actions', 'sources', 'documents', 'versions', 'votes', 'related_bills']))` optional | Related data to inline. `sponsorships` and `actions` cover most research needs without a separate `openstates_get_bill` call. |
 | `page` | `number` default 1 | Page number (1-indexed). |
 | `per_page` | `number` default 10 max 20 | Results per page. API default is 10; set to 20 for maximum per-request coverage. |
@@ -160,15 +161,15 @@ The primary entry point. Supports both full-text and structured filtering.
 **Errors:**
 ```ts
 errors: [
-  { reason: 'missing_scope', code: InvalidParams,
+  { reason: 'missing_scope', code: ValidationError,
     when: 'Neither jurisdiction nor q provided',
     recovery: 'Provide a jurisdiction (state name or OCD-ID) or a full-text search term q, or both.' },
-  { reason: 'invalid_session', code: InvalidParams,
-    when: 'Session identifier not recognized by the API',
-    recovery: 'Use openstates_get_jurisdiction to list valid session identifiers for this jurisdiction.' },
 ]
 // Empty results are NOT an error — return results: [] with pagination so the agent can paginate or
 // adjust filters. Only throw for invalid inputs or upstream failures.
+// The API does not validate `session` against the jurisdiction: an unrecognized session and a valid
+// session with zero matches both return 200 with total_items: 0. There is no signal to tell them
+// apart, so a session-filtered empty result gets the empty-result notice, never a throw.
 ```
 
 ---
@@ -242,14 +243,14 @@ errors: [
 
 ### 3. `openstates_search_people`
 
-**Description:** Search state legislators and officials by name, jurisdiction, chamber, district, or party. Supports name substring matching. Use `org_classification` to target a specific chamber. Returns compact person records; use `include=offices` to get contact information, `include=links` for social/website links.
+**Description:** Search state legislators and officials by name, jurisdiction, chamber, district, or party. Supports name substring matching. Use `org_classification` to target a role type. Returns compact person records; use `include=offices` to get contact information, `include=links` for social/website links.
 
 **Input schema:**
 | Param | Type | Description |
 |:------|:-----|:------------|
 | `jurisdiction` | `string` optional | State name or OCD-ID. Strongly recommended — results without a jurisdiction filter span all states. |
 | `name` | `string` optional | Name or partial name to match (case-insensitive substring). |
-| `org_classification` | `z.enum(['legislature', 'executive', 'lower', 'upper', 'government'])` optional | Filter by role type. `upper` = Senate/upper chamber; `lower` = House/lower chamber; `legislature` = all legislators; `executive` = governors and executive officials. |
+| `org_classification` | `z.enum(['legislature', 'executive', 'lower', 'upper', 'government'])` optional | Filter by role type. `upper` = Senate/upper chamber; `lower` = House/lower chamber; `executive` = governors and executive officials; `legislature` = every legislator, resolved server-side to the `upper` + `lower` union (see below). Omitting the filter returns every officeholder, executive included — not equivalent to `legislature`. |
 | `district` | `string` optional | District label (e.g., `"1"`, `"37"`, `"At-Large"`). District formats vary by state. |
 | `include` | `array(z.enum(['other_names', 'other_identifiers', 'links', 'sources', 'offices']))` optional | `offices` includes phone, fax, and address. `links` includes website and social links. |
 | `page` | `number` default 1 | Page number. |
@@ -286,6 +287,28 @@ errors: [
 // Empty results are NOT an error — return results: [] with pagination.
 // Only throw for invalid inputs or upstream failures.
 ```
+
+**Decision — `legislature` is a server-side union, not a passthrough.** Upstream accepts
+`org_classification=legislature` (it is in the API's own `OrgClassification` enum) but matches
+nobody: only `upper`/`lower` (chambers) and `executive` (individual officials) are ever a
+*person's* current role, so the filter returns an empty set. The service resolves it to the
+`upper` + `lower` union instead. Omitting the filter is **not** a valid alias — measured live
+for WA, `upper` (49) + `lower` (98) + `executive` (4) = 151 = exactly the omitted total, so
+omitting returns every officeholder including the executive branch, a different set from "all
+legislators". The value stays in the enum: it is the natural way to ask the question, and
+removing an accepted input would break callers.
+
+**Decision — the union is sliced, and the chamber totals are fetched before any page.** Two
+upstream constraints (both measured, neither in `openapi.json`) shape this: `per_page` is
+capped at 50 (HTTP 400 above it), and any `page` past a chamber's `max_page` is an HTTP 404
+(`invalid page, must be in [1, N]`). The 404 rules out mapping a requested window straight onto
+each chamber's index space — a chamber's legal page range is unknowable until its total is
+known. So page 1 of each chamber (the only always-legal request) is fetched up front; it yields
+both totals and doubles as the head of the union, after which every page request is legal by
+construction. The caller's window is then sliced out of the *merged* set — never by threading
+the caller's `page`/`offset` into each chamber query, which would skip that many records in
+both and silently drop legislators as the caller pages. Costs two upstream calls for the common
+first page and at most four for a deep one, rather than draining both chambers.
 
 ---
 
@@ -341,7 +364,7 @@ errors: [
 **Input schema:**
 | Param | Type | Description |
 |:------|:-----|:------------|
-| `jurisdiction` | `string` optional | State name or OCD-ID. Strongly recommended. |
+| `jurisdiction` | `string` optional | State name or OCD-ID. Omitting returns an empty result (200, `total_items: 0`) rather than searching all states, so supply one to get results. |
 | `classification` | `z.enum(['committee', 'subcommittee'])` optional | Filter to parent committees or subcommittees. Omit for all. |
 | `chamber` | `z.enum(['upper', 'lower'])` optional | Filter by chamber. |
 | `parent` | `string` optional | OCD organization ID of a parent committee, to retrieve its subcommittees. |
@@ -407,7 +430,7 @@ errors: [
 **Input schema:**
 | Param | Type | Description |
 |:------|:-----|:------------|
-| `jurisdiction` | `string` optional | State name or OCD-ID. Strongly recommended. |
+| `jurisdiction` | `string` optional in the schema, required in practice | State name or OCD-ID. The API rejects requests that omit it (`400 must provide 'jurisdiction' parameter`) — there is no all-states event search. Guarded in the handler via the `jurisdiction_required` reason rather than a required schema field, which would break the already-shipped optional parameter. |
 | `after` | `string` optional | ISO 8601 datetime — events starting after this time. Use to find upcoming hearings. |
 | `before` | `string` optional | ISO 8601 datetime — events starting before this time. |
 | `require_bills` | `boolean` default false | When true, only return events with at least one bill on the agenda. Most useful for tracking legislation. |
@@ -442,6 +465,11 @@ errors: [
 
 **Errors:**
 ```ts
+errors: [
+  { reason: 'jurisdiction_required', code: ValidationError,
+    when: 'jurisdiction was omitted — the /events endpoint requires it',
+    recovery: 'Provide a jurisdiction (state name, abbreviation, or OCD-ID); the events endpoint has no all-states search.' },
+]
 // Empty results are NOT an error — return results: [] with pagination.
 // The experimental coverage note belongs in the tool description, not as an error condition.
 ```

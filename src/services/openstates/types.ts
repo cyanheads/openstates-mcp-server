@@ -127,6 +127,16 @@ export interface BillListResponse {
 
 // --- Person types ---
 
+/**
+ * Accepted values of the upstream `/people` `org_classification` filter (the API's own
+ * `OrgClassification` enum). `legislature` is accepted input but is never any person's
+ * current role — the service resolves it to the `upper` + `lower` union.
+ */
+export type OrgClassification = 'legislature' | 'executive' | 'lower' | 'upper' | 'government';
+
+/** The chambers whose union the `legislature` classification resolves to. */
+export type Chamber = Extract<OrgClassification, 'lower' | 'upper'>;
+
 export interface PersonRole {
   district: string | null;
   org_classification: string;
@@ -300,6 +310,7 @@ export interface BillSearchParams {
   action_since?: string | undefined;
   chamber?: string | undefined;
   classification?: string | undefined;
+  created_since?: string | undefined;
   include?: string[] | undefined;
   jurisdiction?: string | undefined;
   page?: number | undefined;
@@ -318,7 +329,7 @@ export interface PeopleSearchParams {
   include?: string[] | undefined;
   jurisdiction?: string | undefined;
   name?: string | undefined;
-  org_classification?: string | undefined;
+  org_classification?: OrgClassification | undefined;
   page?: number | undefined;
   per_page?: number | undefined;
 }

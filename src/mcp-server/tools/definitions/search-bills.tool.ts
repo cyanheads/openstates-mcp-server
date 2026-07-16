@@ -90,6 +90,13 @@ export const searchBills = tool('openstates_search_bills', {
       .regex(isoDateRegex, isoDateMessage)
       .optional()
       .describe('ISO 8601 date — only return bills updated after this date (e.g., "2025-01-01").'),
+    created_since: z
+      .string()
+      .regex(isoDateRegex, isoDateMessage)
+      .optional()
+      .describe(
+        'ISO 8601 date — only return bills first entered in Open States after this date (e.g., "2025-01-01"). Use to find newly-introduced bills, as opposed to recently-updated or recently-acted-on.',
+      ),
     include: z
       .array(BillIncludeEnum)
       .optional()
@@ -218,6 +225,7 @@ export const searchBills = tool('openstates_search_bills', {
         classification: z.string().optional().describe('Classification filter as received.'),
         action_since: z.string().optional().describe('action_since date filter as received.'),
         updated_since: z.string().optional().describe('updated_since date filter as received.'),
+        created_since: z.string().optional().describe('created_since date filter as received.'),
         sort: z.string().describe('Sort order applied.'),
         page: z.number().describe('Page number requested.'),
         per_page: z.number().describe('Results per page requested.'),
@@ -238,13 +246,6 @@ export const searchBills = tool('openstates_search_bills', {
       when: 'Neither jurisdiction nor q (full-text search) was provided.',
       recovery:
         'Provide a jurisdiction (state name or OCD-ID) or a full-text search term via q, or both.',
-    },
-    {
-      reason: 'invalid_session',
-      code: JsonRpcErrorCode.ValidationError,
-      when: 'Session identifier was not recognized by the Open States API.',
-      recovery:
-        'Use openstates_get_jurisdiction with include=legislative_sessions to list valid session identifiers for this jurisdiction.',
     },
   ],
 
@@ -269,6 +270,7 @@ export const searchBills = tool('openstates_search_bills', {
         sort: input.sort,
         action_since: input.action_since,
         updated_since: input.updated_since,
+        created_since: input.created_since,
         include: input.include && input.include.length > 0 ? input.include : undefined,
         page: input.page,
         per_page: input.per_page,
@@ -295,6 +297,7 @@ export const searchBills = tool('openstates_search_bills', {
         classification: input.classification,
         action_since: input.action_since,
         updated_since: input.updated_since,
+        created_since: input.created_since,
         sort: input.sort,
         page: input.page,
         per_page: input.per_page,
@@ -302,21 +305,16 @@ export const searchBills = tool('openstates_search_bills', {
     });
 
     if (result.results.length === 0) {
-      if (input.session) {
-        throw ctx.fail(
-          'invalid_session',
-          `Session "${input.session}" returned no results — the identifier may not be recognized for this jurisdiction.`,
-          {
-            ...ctx.recoveryFor('invalid_session'),
-          },
-        );
-      }
       const filters: string[] = [];
       if (input.jurisdiction) filters.push(`jurisdiction="${input.jurisdiction}"`);
       if (input.q) filters.push(`q="${input.q}"`);
+      if (input.session) filters.push(`session="${input.session}"`);
       if (input.chamber) filters.push(`chamber="${input.chamber}"`);
+      const sessionHint = input.session
+        ? ' If the session filter is the likely cause, use openstates_get_jurisdiction with include=legislative_sessions to list valid session identifiers for this jurisdiction.'
+        : '';
       ctx.enrich.notice(
-        `No bills matched ${filters.join(', ')}. Try broadening the query or removing filters.`,
+        `No bills matched ${filters.join(', ')}. Try broadening the query or removing filters.${sessionHint}`,
       );
     }
 
