@@ -74,7 +74,7 @@ export const searchBills = tool('openstates_search_bills', {
 
 ```ts
 import { resource, z } from '@cyanheads/mcp-ts-core';
-import { notFound } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 export const jurisdictionResource = resource('openstates://jurisdiction/{jurisdiction_id}', {
@@ -84,10 +84,28 @@ export const jurisdictionResource = resource('openstates://jurisdiction/{jurisdi
   params: z.object({
     jurisdiction_id: z.string().describe('OCD jurisdiction ID, state name, or two-letter abbreviation.'),
   }),
+  errors: [
+    {
+      reason: 'not_found',
+      code: JsonRpcErrorCode.NotFound,
+      when: 'Jurisdiction ID does not exist in Open States.',
+      recovery: 'Use openstates_list_jurisdictions to discover valid jurisdiction IDs.',
+    },
+  ],
   async handler(params, ctx) {
     const svc = getOpenStatesApiService();
-    const jurisdiction = await svc.getJurisdiction(params.jurisdiction_id, ['legislative_sessions'], ctx);
-    if (!jurisdiction) throw notFound(`Jurisdiction not found: ${params.jurisdiction_id}`, { jurisdiction_id: params.jurisdiction_id });
+    // The service layer throws on a non-OK response, so translate its NotFound into the
+    // resource's typed error contract; anything else propagates unchanged.
+    const jurisdiction = await svc
+      .getJurisdiction(params.jurisdiction_id, ['legislative_sessions'], ctx)
+      .catch((err: unknown) => {
+        if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+          throw ctx.fail('not_found', `Jurisdiction not found: ${params.jurisdiction_id}`, {
+            ...ctx.recoveryFor('not_found'),
+          });
+        }
+        throw err;
+      });
     return jurisdiction;
   },
 });

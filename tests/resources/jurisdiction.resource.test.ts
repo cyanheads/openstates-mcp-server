@@ -3,6 +3,7 @@
  * @module tests/resources/jurisdiction.resource.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { jurisdictionResource } from '@/mcp-server/resources/definitions/jurisdiction.resource.js';
@@ -60,13 +61,41 @@ describe('jurisdictionResource', () => {
     );
   });
 
-  it('throws when service returns a falsy jurisdiction', async () => {
-    // The service should normally return a valid object; a null/undefined indicates
-    // a "not found" — simulate it here to verify the guard path
-    mockService.getJurisdiction.mockResolvedValue(null);
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = jurisdictionResource.params.parse({ jurisdiction_id: 'xx' });
-    await expect(jurisdictionResource.handler(params, ctx)).rejects.toThrow();
+  it('rethrows a service NotFound as a typed not-found error with the invalid id and recovery', async () => {
+    // The real not-found path is a rejected McpError (upstream 404 → NotFound), never a
+    // resolved null — the service's fetchJson only ever throws on a non-OK response. The
+    // resource must translate that into its own typed error, mirroring openstates_get_jurisdiction.
+    mockService.getJurisdiction.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.NotFound, 'OpenStates returned HTTP 404 Not Found.', {
+        url: 'https://v3.openstates.org/jurisdictions/not-a-real-jurisdiction',
+      }),
+    );
+    const ctx = createMockContext({ errors: jurisdictionResource.errors });
+    const params = jurisdictionResource.params.parse({
+      jurisdiction_id: 'not-a-real-jurisdiction',
+    });
+    await expect(jurisdictionResource.handler(params, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.NotFound,
+      message: 'Jurisdiction not found: not-a-real-jurisdiction',
+      data: {
+        reason: 'not_found',
+        recovery: { hint: expect.stringContaining('openstates_list_jurisdictions') },
+      },
+    });
+  });
+
+  it('propagates a non-NotFound service error without wrapping it as not_found', async () => {
+    // Regression guard: only a NotFound is translated; every other upstream failure bubbles
+    // up unchanged so the caller sees the real cause (a wrapped ServiceUnavailable would flip
+    // the code to NotFound and fail this assertion).
+    mockService.getJurisdiction.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'Open States API unavailable.'),
+    );
+    const ctx = createMockContext({ errors: jurisdictionResource.errors });
+    const params = jurisdictionResource.params.parse({ jurisdiction_id: 'wa' });
+    await expect(jurisdictionResource.handler(params, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+    });
   });
 
   it('propagates network errors from service', async () => {
