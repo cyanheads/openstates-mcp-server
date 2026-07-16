@@ -17,7 +17,9 @@ export const searchCommittees = tool('openstates_search_committees', {
     jurisdiction: z
       .string()
       .optional()
-      .describe('State name, abbreviation, or OCD-ID. Omitting searches across all states.'),
+      .describe(
+        'State name, abbreviation, or OCD-ID. Omitting returns no committees rather than searching all states — supply a jurisdiction to get results.',
+      ),
     classification: z
       .enum(['committee', 'subcommittee'])
       .optional()

@@ -48,6 +48,21 @@ describe('searchEvents', () => {
     expect(result.results[0].name).toBe('Transportation Committee Hearing');
   });
 
+  /**
+   * The Open States /events endpoint requires jurisdiction and answers
+   * `400 must provide 'jurisdiction' parameter` without it — there is no
+   * all-states event search. Guard locally so the agent gets a typed reason and
+   * a recovery hint instead of a generic upstream 400.
+   */
+  it('throws jurisdiction_required when jurisdiction is omitted, without calling the service', async () => {
+    const ctx = createMockContext({ errors: searchEvents.errors });
+    const input = searchEvents.input.parse({});
+    await expect(searchEvents.handler(input, ctx)).rejects.toMatchObject({
+      data: { reason: 'jurisdiction_required' },
+    });
+    expect(mockService.searchEvents).not.toHaveBeenCalled();
+  });
+
   it('returns empty results with enrichment notice on experimental coverage', async () => {
     mockService.searchEvents.mockResolvedValue({
       results: [],

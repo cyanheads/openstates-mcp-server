@@ -4,6 +4,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const EventIncludeEnum = z.enum([
@@ -29,7 +30,9 @@ export const searchEvents = tool('openstates_search_events', {
     jurisdiction: z
       .string()
       .optional()
-      .describe('State name, abbreviation, or OCD-ID. Omitting searches across all states.'),
+      .describe(
+        'State name, abbreviation, or OCD-ID. Required — the Open States events endpoint has no all-states search and rejects requests that omit it.',
+      ),
     after: z
       .string()
       .regex(isoDateRegex, isoDateMessage)
@@ -176,8 +179,27 @@ export const searchEvents = tool('openstates_search_events', {
       render: (v) => `Filters: ${JSON.stringify(v)}`,
     },
   },
+  errors: [
+    {
+      reason: 'jurisdiction_required',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'jurisdiction was omitted — the Open States events endpoint requires it.',
+      recovery:
+        'Provide a jurisdiction (state name, abbreviation, or OCD-ID); the events endpoint has no all-states search.',
+    },
+  ],
 
   async handler(input, ctx) {
+    if (!input.jurisdiction) {
+      throw ctx.fail(
+        'jurisdiction_required',
+        'jurisdiction is required for openstates_search_events.',
+        {
+          ...ctx.recoveryFor('jurisdiction_required'),
+        },
+      );
+    }
+
     const svc = getOpenStatesApiService();
     const result = await svc.searchEvents(
       {
