@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.13](changelog/0.1.x/0.1.13.md) — 2026-07-16
+
+Every include-capable tool surfaces enrichment fields previously dropped (other_titles, sources, organizations, votes, and more); event participant role is now optional to match upstream sparsity; coverage copy corrected to 5 US territories across all metadata surfaces.
+
 ## [0.1.12](changelog/0.1.x/0.1.12.md) — 2026-07-16
 
 Committee search normalizes jurisdiction names to avoid an upstream 500; jurisdiction listing merges pages internally for the complete 56-jurisdiction inventory; the jurisdiction resource adopts a typed not-found contract.
