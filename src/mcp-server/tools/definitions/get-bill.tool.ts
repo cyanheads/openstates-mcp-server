@@ -247,10 +247,18 @@ export const getBill = tool('openstates_get_bill', {
   ],
 
   async handler(input, ctx) {
-    const hasOcdId = !!input.openstates_id;
-    const hasPathLookup = !!input.jurisdiction && !!input.session && !!input.bill_id;
+    const lookup = input.openstates_id
+      ? ({ kind: 'id', openstatesId: input.openstates_id } as const)
+      : input.jurisdiction && input.session && input.bill_id
+        ? ({
+            kind: 'path',
+            jurisdiction: input.jurisdiction,
+            session: input.session,
+            billId: input.bill_id,
+          } as const)
+        : undefined;
 
-    if (!hasOcdId && !hasPathLookup) {
+    if (!lookup) {
       throw ctx.fail(
         'missing_lookup_params',
         'Provide openstates_id OR jurisdiction + session + bill_id.',
@@ -263,9 +271,9 @@ export const getBill = tool('openstates_get_bill', {
     const svc = getOpenStatesApiService();
     const include = input.include && input.include.length > 0 ? input.include : undefined;
 
-    const bill = await (hasOcdId
-      ? svc.getBillById(input.openstates_id!, include, ctx)
-      : svc.getBillByPath(input.jurisdiction!, input.session!, input.bill_id!, include, ctx)
+    const bill = await (lookup.kind === 'id'
+      ? svc.getBillById(lookup.openstatesId, include, ctx)
+      : svc.getBillByPath(lookup.jurisdiction, lookup.session, lookup.billId, include, ctx)
     ).catch((err: unknown) => {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         const id = input.openstates_id ?? `${input.jurisdiction}/${input.session}/${input.bill_id}`;
