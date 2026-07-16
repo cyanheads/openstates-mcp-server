@@ -23,7 +23,7 @@ export const getCommittee = tool('openstates_get_committee', {
       .array(CommitteeIncludeEnum)
       .optional()
       .describe(
-        'Related data to inline. "memberships" includes the full roster with member roles.',
+        'Related data to inline. "memberships" includes the full roster with member roles. "links" includes the committee homepage and reference links, and "sources" the provenance URLs behind the record.',
       ),
   }),
   output: z.object({
@@ -46,6 +46,28 @@ export const getCommittee = tool('openstates_get_committee', {
       )
       .optional()
       .describe('Membership roster when include=memberships is requested.'),
+    links: z
+      .array(
+        z
+          .object({
+            url: z.string().describe('Link URL.'),
+            note: z.string().describe('Link description (e.g., "homepage").'),
+          })
+          .describe('External link record.'),
+      )
+      .optional()
+      .describe('Committee homepage and reference links when include=links is requested.'),
+    sources: z
+      .array(
+        z
+          .object({
+            url: z.string().describe('Source URL.'),
+            note: z.string().describe('Source note.'),
+          })
+          .describe('Source record.'),
+      )
+      .optional()
+      .describe('Provenance sources when include=sources is requested.'),
   }),
   errors: [
     {
@@ -80,6 +102,8 @@ export const getCommittee = tool('openstates_get_committee', {
       classification: committee.classification,
       parent_id: committee.parent_id,
       ...(committee.memberships ? { memberships: committee.memberships } : {}),
+      ...(committee.links ? { links: committee.links } : {}),
+      ...(committee.sources ? { sources: committee.sources } : {}),
     };
   },
 
@@ -95,6 +119,20 @@ export const getCommittee = tool('openstates_get_committee', {
       lines.push('## Members');
       for (const m of result.memberships) {
         lines.push(`- ${m.person_name} (${m.role}) — ID: ${m.person_id}`);
+      }
+    }
+    if (result.links?.length) {
+      lines.push('');
+      lines.push('## Links');
+      for (const l of result.links) {
+        lines.push(`- ${l.note}: ${l.url}`);
+      }
+    }
+    if (result.sources?.length) {
+      lines.push('');
+      lines.push('## Sources');
+      for (const s of result.sources) {
+        lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
       }
     }
     return [{ type: 'text', text: lines.join('\n') }];

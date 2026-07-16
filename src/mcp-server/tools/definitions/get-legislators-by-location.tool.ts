@@ -28,7 +28,9 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
     include: z
       .array(PersonIncludeEnum)
       .optional()
-      .describe('Related data to inline. "offices" includes phone, fax, and address.'),
+      .describe(
+        'Related data to inline. "offices" includes phone, fax, and address. "links" includes website and social links. "other_names" includes alternate/former names, "other_identifiers" cross-system IDs, and "sources" the provenance URLs behind the record.',
+      ),
   }),
   output: z.object({
     legislators: z
@@ -79,6 +81,39 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
               )
               .optional()
               .describe('Website and social links when include=links is requested.'),
+            other_names: z
+              .array(
+                z
+                  .object({
+                    name: z.string().describe('Alternate or former name.'),
+                    note: z.string().describe('Note describing the alternate name.'),
+                  })
+                  .describe('Alternate name record.'),
+              )
+              .optional()
+              .describe('Alternate/former names when include=other_names is requested.'),
+            other_identifiers: z
+              .array(
+                z
+                  .object({
+                    identifier: z.string().describe('Alternate identifier.'),
+                    scheme: z.string().describe('Identifier scheme (the issuing system).'),
+                  })
+                  .describe('Alternate identifier record.'),
+              )
+              .optional()
+              .describe('Cross-system identifiers when include=other_identifiers is requested.'),
+            sources: z
+              .array(
+                z
+                  .object({
+                    url: z.string().describe('Source URL.'),
+                    note: z.string().describe('Source note.'),
+                  })
+                  .describe('Source record.'),
+              )
+              .optional()
+              .describe('Provenance sources when include=sources is requested.'),
           })
           .describe('Legislator record.'),
       )
@@ -138,7 +173,7 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
 
     if (result.results.length === 0) {
       ctx.enrich.notice(
-        `No legislators found for coordinates (${input.latitude}, ${input.longitude}). Verify the location is within a US state, DC, or Puerto Rico.`,
+        `No legislators found for coordinates (${input.latitude}, ${input.longitude}). Verify the location is within a US state, DC, or one of the 5 US territories.`,
       );
     }
 
@@ -174,6 +209,24 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
       }
       if (person.links?.length) {
         lines.push(`**Links:** ${person.links.map((l) => `${l.note}: ${l.url}`).join(', ')}`);
+      }
+      if (person.other_names?.length) {
+        lines.push('**Other names:**');
+        for (const n of person.other_names) {
+          lines.push(`- ${n.name}${n.note ? ` _(${n.note})_` : ''}`);
+        }
+      }
+      if (person.other_identifiers?.length) {
+        lines.push('**Other identifiers:**');
+        for (const oi of person.other_identifiers) {
+          lines.push(`- ${oi.identifier} (${oi.scheme})`);
+        }
+      }
+      if (person.sources?.length) {
+        lines.push('**Sources:**');
+        for (const s of person.sources) {
+          lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
+        }
       }
     }
     return [{ type: 'text', text: lines.join('\n') }];

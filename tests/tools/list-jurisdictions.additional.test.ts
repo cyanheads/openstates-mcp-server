@@ -195,3 +195,62 @@ describe('listJurisdictions — format edge cases', () => {
     expect(text).toContain('special');
   });
 });
+
+/**
+ * Regression coverage for the include-enrichment data loss (issue #18). list_jurisdictions
+ * advertises organizations and latest_runs via `include`, but the output schema declared no
+ * fields for them (organizations was even untyped upstream), so strict output parsing stripped
+ * them from both the structuredContent and content[] paths. The handler returns the service
+ * result directly, so the schema + format() change alone must surface them. Fixture shapes mirror
+ * JurisdictionOrganization ({ id?, name?, classification? }) and RunPlan ({ start_time, end_time?,
+ * success? }) in src/services/openstates/types.ts.
+ */
+describe('listJurisdictions — include enrichment surfacing (organizations, latest_runs)', () => {
+  let mockService: { listJurisdictions: ReturnType<typeof vi.fn> };
+
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    mockService = { listJurisdictions: vi.fn() };
+    vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
+  });
+
+  const enrichedJurisdiction = {
+    ...mockJurisdiction,
+    organizations: [
+      { id: 'ocd-organization/senate', name: 'Washington State Senate', classification: 'upper' },
+    ],
+    latest_runs: [
+      { start_time: '2025-05-20T02:00:00Z', end_time: '2025-05-20T02:12:00Z', success: true },
+    ],
+  };
+  const enrichedResult = {
+    results: [enrichedJurisdiction],
+    pagination: { page: 1, per_page: 52, max_page: 1, total_items: 1 },
+  };
+
+  it('carries organizations and latest_runs through the output schema', async () => {
+    mockService.listJurisdictions.mockResolvedValue(enrichedResult);
+    const ctx = createMockContext();
+    const input = listJurisdictions.input.parse({ include: ['organizations', 'latest_runs'] });
+    const handlerResult = await listJurisdictions.handler(input, ctx);
+    const jur = listJurisdictions.output.parse(handlerResult).results[0];
+    expect(jur.organizations).toEqual([
+      { id: 'ocd-organization/senate', name: 'Washington State Senate', classification: 'upper' },
+    ]);
+    expect(jur.latest_runs).toEqual([
+      { start_time: '2025-05-20T02:00:00Z', end_time: '2025-05-20T02:12:00Z', success: true },
+    ]);
+  });
+
+  /** content[] path — format() rendered neither pre-fix. */
+  it('renders organizations and latest_runs in format() text', () => {
+    const blocks = listJurisdictions.format!(enrichedResult);
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('Washington State Senate');
+    expect(text).toContain('upper');
+    expect(text).toContain('ocd-organization/senate');
+    expect(text).toContain('2025-05-20T02:00:00Z');
+    expect(text).toContain('2025-05-20T02:12:00Z');
+    expect(text).toContain('success');
+  });
+});

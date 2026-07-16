@@ -148,6 +148,9 @@ The primary entry point. Supports both full-text and structured filtering.
     versions?: BillDocumentOrVersion[];
     documents?: BillDocumentOrVersion[];
     related_bills?: RelatedBill[];
+    other_titles?: Array<{ title: string; note: string }>;
+    other_identifiers?: Array<{ identifier: string; scheme: string }>;
+    sources?: Array<{ url: string; note: string }>;
   }>;
   pagination: {
     page: number;
@@ -224,6 +227,9 @@ errors: [
   versions?: Array<{ id: string; note: string; date: string; links: Array<{ url, media_type }> }>;
   documents?: Array<{ id: string; note: string; date: string; links: Array<{ url, media_type }> }>;
   related_bills?: Array<{ identifier: string; legislative_session: string; relation_type: string }>;
+  other_titles?: Array<{ title: string; note: string }>;
+  other_identifiers?: Array<{ identifier: string; scheme: string }>;
+  sources?: Array<{ url: string; note: string }>;
 }
 ```
 
@@ -277,6 +283,9 @@ errors: [
     // When included:
     offices?: Array<{ name, classification, voice?, fax?, address? }>;
     links?: Array<{ url, note }>;
+    other_names?: Array<{ name, note }>;
+    other_identifiers?: Array<{ identifier, scheme }>;
+    sources?: Array<{ url, note }>;
   }>;
   pagination: { page, per_page, max_page, total_items };
 }
@@ -338,13 +347,16 @@ High-value constituent lookup — no equivalent in congressgov-mcp-server (which
     openstates_url: string;
     offices?: Array<{ name, classification, voice?, fax?, address? }>;
     links?: Array<{ url, note }>;
+    other_names?: Array<{ name, note }>;
+    other_identifiers?: Array<{ identifier, scheme }>;
+    sources?: Array<{ url, note }>;
   }>;
   count: number;
   coverage_note?: string;  // Present when results are empty — explains why (e.g., outside US boundaries)
 }
 ```
 
-**Output note:** When no legislators are found for a valid coordinate (ocean, outside US), return `legislators: [], count: 0` — not an error. Add a `coverage_note` string field to the output to carry context when results are empty (e.g., "No legislators found for this coordinate. Verify the location is within a US state, DC, or Puerto Rico.").
+**Output note:** When no legislators are found for a valid coordinate (ocean, outside US), return `legislators: [], count: 0` — not an error. Add a `coverage_note` string field to the output to carry context when results are empty (e.g., "No legislators found for this coordinate. Verify the location is within a US state, DC, or one of the 5 US territories.").
 
 **Errors:**
 ```ts
@@ -386,6 +398,8 @@ errors: [
       role: string;
       person?: CompactPerson;
     }>;
+    links?: Array<{ url, note }>;
+    sources?: Array<{ url, note }>;
   }>;
   pagination: { page, per_page, max_page, total_items };
   coverage_note?: string;  // "Committee data is experimental — not all states have coverage."
@@ -451,7 +465,11 @@ errors: [
     status: string;
     jurisdiction: { id, name };
     location?: { name, url, coordinates };
-    participants?: Array<{ name, entity_type, role, organization?, person? }>;
+    links?: Array<{ url, note }>;
+    sources?: Array<{ url, note }>;
+    media?: Array<{ url, note }>;
+    documents?: Array<{ url, note }>;
+    participants?: Array<{ name, entity_type, role?, organization?, person? }>;
     agenda?: Array<{
       description: string;
       classification: string[];
@@ -501,7 +519,8 @@ errors: [
   links?: Array<{ url: string; note: string }>;
   media?: Array<{ url: string; note: string }>;
   documents?: Array<{ url: string; note: string }>;
-  participants?: Array<{ name: string; entity_type: string; role: string; organization?: unknown; person?: unknown }>;
+  sources?: Array<{ url: string; note: string }>;
+  participants?: Array<{ name: string; entity_type: string; role?: string; organization?: unknown; person?: unknown }>;
   agenda?: Array<{
     description: string;
     classification: string[];
@@ -553,6 +572,8 @@ errors: [
       start_date: string;
       end_date: string;
     }>;
+    organizations?: Array<{ id?: string; name?: string; classification?: string }>;
+    latest_runs?: Array<{ start_time: string; end_time?: string; success?: boolean }>;
   }>;
   pagination: { page, per_page, max_page, total_items };
 }
@@ -579,7 +600,7 @@ errors: [
   url: string;
   latest_bill_update: string;
   latest_people_update: string;
-  organizations?: Organization[];
+  organizations?: JurisdictionOrganization[];
   legislative_sessions?: LegislativeSession[];
   latest_runs?: RunPlan[];
 }

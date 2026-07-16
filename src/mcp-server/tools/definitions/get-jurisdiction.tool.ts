@@ -25,7 +25,7 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
       .array(JurisdictionIncludeEnum)
       .optional()
       .describe(
-        'Related data to inline. "legislative_sessions" returns all historical and current sessions with identifiers and date ranges. "latest_runs" shows last scraper run metadata.',
+        'Related data to inline. "legislative_sessions" returns all historical and current sessions with identifiers and date ranges. "organizations" lists the jurisdiction\'s legislative chambers and executive bodies. "latest_runs" shows last scraper run metadata.',
       ),
   }),
   output: z.object({
@@ -55,6 +55,44 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
       )
       .optional()
       .describe('All legislative sessions when include=legislative_sessions is requested.'),
+    organizations: z
+      .array(
+        z
+          .object({
+            id: z.string().optional().describe('OCD organization ID.'),
+            name: z
+              .string()
+              .optional()
+              .describe('Organization name (e.g., "Washington State Senate").'),
+            classification: z
+              .string()
+              .optional()
+              .describe('Organization type (e.g., "upper", "lower", "legislature").'),
+          })
+          .describe('Organization record.'),
+      )
+      .optional()
+      .describe(
+        'Legislative chambers and executive bodies when include=organizations is requested.',
+      ),
+    latest_runs: z
+      .array(
+        z
+          .object({
+            start_time: z.string().describe('ISO 8601 timestamp when the scraper run started.'),
+            end_time: z
+              .string()
+              .optional()
+              .describe('ISO 8601 timestamp when the run finished. Absent when unrecorded.'),
+            success: z
+              .boolean()
+              .optional()
+              .describe('Whether the run succeeded. Absent when not recorded.'),
+          })
+          .describe('Scraper run record.'),
+      )
+      .optional()
+      .describe('Recent scraper runs when include=latest_runs is requested.'),
   }),
   errors: [
     {
@@ -91,6 +129,8 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
       latest_bill_update: result.latest_bill_update,
       latest_people_update: result.latest_people_update,
       ...(result.legislative_sessions ? { legislative_sessions: result.legislative_sessions } : {}),
+      ...(result.organizations ? { organizations: result.organizations } : {}),
+      ...(result.latest_runs ? { latest_runs: result.latest_runs } : {}),
     };
   },
 
@@ -110,6 +150,23 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
         lines.push(
           `- \`${s.identifier}\` — ${s.name} (${s.classification}) ${s.start_date}–${s.end_date}`,
         );
+      }
+    }
+    if (result.organizations?.length) {
+      lines.push('');
+      lines.push('## Organizations');
+      for (const o of result.organizations) {
+        const cls = o.classification ? ` (${o.classification})` : '';
+        const id = o.id ? ` — ${o.id}` : '';
+        lines.push(`- ${o.name ?? '(unnamed)'}${cls}${id}`);
+      }
+    }
+    if (result.latest_runs?.length) {
+      lines.push('');
+      lines.push('## Latest Runs');
+      for (const r of result.latest_runs) {
+        const end = r.end_time ? ` → ${r.end_time}` : '';
+        lines.push(`- ${r.start_time}${end} (success: ${r.success ?? 'n/a'})`);
       }
     }
     return [{ type: 'text', text: lines.join('\n') }];

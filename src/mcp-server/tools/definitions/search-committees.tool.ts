@@ -36,7 +36,7 @@ export const searchCommittees = tool('openstates_search_committees', {
       .array(CommitteeIncludeEnum)
       .optional()
       .describe(
-        'Related data to inline. "memberships" includes the full roster with member roles.',
+        'Related data to inline. "memberships" includes the full roster with member roles. "links" includes the committee homepage and reference links, and "sources" the provenance URLs behind the record.',
       ),
     page: z.coerce.number().int().min(1).default(1).describe('Page number (1-indexed).'),
     per_page: z.coerce
@@ -75,6 +75,28 @@ export const searchCommittees = tool('openstates_search_committees', {
               )
               .optional()
               .describe('Membership roster when include=memberships is requested.'),
+            links: z
+              .array(
+                z
+                  .object({
+                    url: z.string().describe('Link URL.'),
+                    note: z.string().describe('Link description (e.g., "homepage").'),
+                  })
+                  .describe('External link record.'),
+              )
+              .optional()
+              .describe('Committee homepage and reference links when include=links is requested.'),
+            sources: z
+              .array(
+                z
+                  .object({
+                    url: z.string().describe('Source URL.'),
+                    note: z.string().describe('Source note.'),
+                  })
+                  .describe('Source record.'),
+              )
+              .optional()
+              .describe('Provenance sources when include=sources is requested.'),
           })
           .describe('Committee record.'),
       )
@@ -171,6 +193,15 @@ export const searchCommittees = tool('openstates_search_committees', {
         lines.push('**Members:**');
         for (const m of committee.memberships) {
           lines.push(`- ${m.person_name} (${m.role}) — ID: ${m.person_id}`);
+        }
+      }
+      if (committee.links?.length) {
+        lines.push(`**Links:** ${committee.links.map((l) => `${l.note}: ${l.url}`).join(', ')}`);
+      }
+      if (committee.sources?.length) {
+        lines.push('**Sources:**');
+        for (const s of committee.sources) {
+          lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
         }
       }
     }

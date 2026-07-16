@@ -355,3 +355,136 @@ describe('searchBills — format edge cases', () => {
     expect(text).toContain('2 bills');
   });
 });
+
+/**
+ * Regression coverage for the include-enrichment data loss (issue #18): the tool
+ * advertises other_titles, other_identifiers, sources, documents, versions,
+ * votes, and related_bills via `include`, but each was dropped before MCP
+ * serialization — the output schema stripped the keys (Zod drops undeclared
+ * object keys) and format() never rendered them, so both the structuredContent
+ * and content[] client paths lost the data. Fixture shapes mirror the Bill
+ * interface in src/services/openstates/types.ts.
+ */
+describe('searchBills — include enrichment surfacing', () => {
+  const enrichedBill = {
+    ...mockBill,
+    other_titles: [{ title: 'An act concerning public safety', note: 'as introduced' }],
+    other_identifiers: [{ identifier: 'HB1000-2025', scheme: 'lwrsn' }],
+    sources: [{ url: 'https://leg.wa.gov/HB1000', note: 'Legislature bill page' }],
+    documents: [
+      {
+        id: 'doc-hb1000',
+        note: 'Fiscal Note',
+        date: '2025-01-20',
+        links: [{ url: 'https://leg.wa.gov/HB1000-fiscal.pdf', media_type: 'application/pdf' }],
+      },
+    ],
+    versions: [
+      {
+        id: 'ver-hb1000',
+        note: 'Substitute Bill',
+        date: '2025-02-02',
+        links: [{ url: 'https://leg.wa.gov/HB1000-S.pdf', media_type: 'application/pdf' }],
+      },
+    ],
+    votes: [
+      {
+        id: 'vote-hb1000',
+        motion_text: 'Third reading, final passage',
+        start_date: '2025-03-09',
+        result: 'pass',
+        identifier: 'HB1000-final',
+        counts: [
+          { option: 'yes', value: 88 },
+          { option: 'no', value: 9 },
+        ],
+        votes: [
+          {
+            option: 'yes',
+            voter_name: 'Rep. Enrichment',
+            voter: { id: 'ocd-person/enrich', name: 'Rep. Enrichment' },
+          },
+        ],
+      },
+    ],
+    related_bills: [
+      { identifier: 'SB 5000', legislative_session: '2025', relation_type: 'companion' },
+    ],
+  };
+
+  /**
+   * structuredContent path. Parsing the handler result through the tool's own
+   * output schema is the exact step that dropped the data pre-fix — Zod strips
+   * keys the schema does not declare, so before the fix `parsed.results[0]` had
+   * none of these seven fields and every assertion below failed.
+   */
+  it('retains every include enrichment through the output schema', async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    const mockService = {
+      searchBills: vi.fn().mockResolvedValue({
+        results: [enrichedBill],
+        pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+      }),
+    };
+    vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
+
+    const ctx = createMockContext();
+    const input = searchBills.input.parse({
+      jurisdiction: 'wa',
+      include: [
+        'other_titles',
+        'other_identifiers',
+        'sources',
+        'documents',
+        'versions',
+        'votes',
+        'related_bills',
+      ],
+    });
+    const handlerResult = await searchBills.handler(input, ctx);
+    const parsed = searchBills.output.parse(handlerResult);
+    const bill = parsed.results[0];
+
+    expect(bill.other_titles).toEqual([
+      { title: 'An act concerning public safety', note: 'as introduced' },
+    ]);
+    expect(bill.other_identifiers).toEqual([{ identifier: 'HB1000-2025', scheme: 'lwrsn' }]);
+    expect(bill.sources).toEqual([
+      { url: 'https://leg.wa.gov/HB1000', note: 'Legislature bill page' },
+    ]);
+    expect(bill.documents?.[0].links[0].url).toBe('https://leg.wa.gov/HB1000-fiscal.pdf');
+    expect(bill.versions?.[0].note).toBe('Substitute Bill');
+    expect(bill.votes?.[0].counts).toEqual([
+      { option: 'yes', value: 88 },
+      { option: 'no', value: 9 },
+    ]);
+    expect(bill.votes?.[0].votes[0].voter?.id).toBe('ocd-person/enrich');
+    expect(bill.related_bills?.[0].relation_type).toBe('companion');
+  });
+
+  /**
+   * content[] path. format() rendered none of these pre-fix, so a Claude
+   * Desktop-style client (which reads content[] text, not structuredContent)
+   * saw less than a structuredContent client. Each assertion targets a distinct
+   * enrichment's value in the rendered text.
+   */
+  it('renders every include enrichment in format() text', () => {
+    const blocks = searchBills.format!({
+      results: [enrichedBill],
+      pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+    });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('An act concerning public safety');
+    expect(text).toContain('HB1000-2025');
+    expect(text).toContain('lwrsn');
+    expect(text).toContain('https://leg.wa.gov/HB1000');
+    expect(text).toContain('https://leg.wa.gov/HB1000-fiscal.pdf');
+    expect(text).toContain('Substitute Bill');
+    expect(text).toContain('Third reading, final passage');
+    expect(text).toContain('yes: 88');
+    expect(text).toContain('Rep. Enrichment');
+    expect(text).toContain('ocd-person/enrich');
+    expect(text).toContain('SB 5000');
+    expect(text).toContain('companion');
+  });
+});

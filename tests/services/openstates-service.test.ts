@@ -449,6 +449,113 @@ describe('searchPeople — other classifications are untouched', () => {
 });
 
 // --------------------------------------------------------------------------
+// normalizePerson — include enrichment survives normalization (issue #18)
+// --------------------------------------------------------------------------
+
+/**
+ * A raw upstream person carrying the three enrichment arrays that `include=other_names`,
+ * `other_identifiers`, and `sources` request. Pre-fix, `normalizePerson` rebuilt the public
+ * `Person` record field-by-field and copied only `offices`/`links`, so these three were dropped
+ * inside the service — before any tool output schema or format() could ever see them, and
+ * regardless of what those tools declared. The strip lives on the one function that backs both
+ * the `/people` (search_people) and `/people.geo` (get_legislators_by_location) paths, so both
+ * are exercised below to prove the single fix covers both tools.
+ */
+const RAW_PERSON_WITH_ENRICHMENT: RawPerson = {
+  id: 'ocd-person/smith',
+  name: 'Jane Smith',
+  party: 'Democratic',
+  current_role: { title: 'Senator', org_classification: 'upper', district: '37' },
+  jurisdiction: { id: 'ocd-jurisdiction/country:us/state:wa/government', name: 'Washington' },
+  given_name: 'Jane',
+  family_name: 'Smith',
+  email: 'jane.smith@leg.wa.gov',
+  openstates_url: 'https://openstates.org/person/jane-smith/',
+  other_names: [{ name: 'Jane A. Smith', note: 'ballot name' }],
+  other_identifiers: [{ identifier: 'WA000123', scheme: 'legacy_openstates' }],
+  sources: [{ url: 'https://leg.wa.gov/senators/smith', note: 'official roster' }],
+};
+
+const EXPECTED_OTHER_NAMES = [{ name: 'Jane A. Smith', note: 'ballot name' }];
+const EXPECTED_OTHER_IDENTIFIERS = [{ identifier: 'WA000123', scheme: 'legacy_openstates' }];
+const EXPECTED_SOURCES = [{ url: 'https://leg.wa.gov/senators/smith', note: 'official roster' }];
+
+describe('normalizePerson — include enrichment survives normalization', () => {
+  let svc: OpenStatesApiService;
+  const ctx = createMockContext();
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Serves the enrichment-bearing person on `/people`; `/people.geo` omits pagination. */
+  function stubEnrichmentPerson(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const isGeo = new URL(String(input)).pathname.endsWith('/people.geo');
+        return Promise.resolve(
+          jsonResponse(
+            200,
+            isGeo
+              ? { results: [RAW_PERSON_WITH_ENRICHMENT] }
+              : {
+                  results: [RAW_PERSON_WITH_ENRICHMENT],
+                  pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+                },
+          ),
+        );
+      }),
+    );
+    svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+  }
+
+  it('carries other_names/other_identifiers/sources through the /people (search_people) path', async () => {
+    stubEnrichmentPerson();
+    const res = await svc.searchPeople(
+      { jurisdiction: 'wa', org_classification: 'upper', page: 1, per_page: 10 },
+      ctx,
+    );
+    const person = res.results[0];
+    expect(person?.other_names).toEqual(EXPECTED_OTHER_NAMES);
+    expect(person?.other_identifiers).toEqual(EXPECTED_OTHER_IDENTIFIERS);
+    expect(person?.sources).toEqual(EXPECTED_SOURCES);
+  });
+
+  it('carries the same enrichment through the /people.geo (get_legislators_by_location) path', async () => {
+    stubEnrichmentPerson();
+    const res = await svc.getPeopleByGeo(47.6062, -122.3321, ['other_names', 'sources'], ctx);
+    const person = res.results[0];
+    expect(person?.other_names).toEqual(EXPECTED_OTHER_NAMES);
+    expect(person?.other_identifiers).toEqual(EXPECTED_OTHER_IDENTIFIERS);
+    expect(person?.sources).toEqual(EXPECTED_SOURCES);
+  });
+
+  it('omits the enrichment arrays entirely when upstream provides none (sparse payload)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse(200, {
+            results: [{ id: 'ocd-person/x', name: 'No Extras', party: 'Independent' }],
+            pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+          }),
+        ),
+      ),
+    );
+    svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    const res = await svc.searchPeople(
+      { jurisdiction: 'wa', org_classification: 'upper', page: 1, per_page: 10 },
+      ctx,
+    );
+    const person = res.results[0];
+    expect(person).not.toHaveProperty('other_names');
+    expect(person).not.toHaveProperty('other_identifiers');
+    expect(person).not.toHaveProperty('sources');
+  });
+});
+
+// --------------------------------------------------------------------------
 // searchCommittees — jurisdiction normalization (state name → abbreviation)
 // --------------------------------------------------------------------------
 

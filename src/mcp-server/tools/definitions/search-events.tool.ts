@@ -55,7 +55,7 @@ export const searchEvents = tool('openstates_search_events', {
       .array(EventIncludeEnum)
       .optional()
       .describe(
-        'Related data to inline. "agenda" includes the meeting agenda with bill references. "participants" includes the committee or chamber hosting the event.',
+        'Related data to inline. "agenda" includes the meeting agenda with bill references. "participants" includes the committee or chamber hosting the event. "links" and "media" add related URLs and recordings, "documents" the attached files, and "sources" the provenance URLs behind the record.',
       ),
     page: z.coerce.number().int().min(1).default(1).describe('Page number (1-indexed).'),
     per_page: z.coerce
@@ -96,6 +96,50 @@ export const searchEvents = tool('openstates_search_events', {
               })
               .optional()
               .describe('Event location when available.'),
+            links: z
+              .array(
+                z
+                  .object({
+                    url: z.string().describe('Link URL.'),
+                    note: z.string().describe('Link description.'),
+                  })
+                  .describe('External link record.'),
+              )
+              .optional()
+              .describe('Event links when include=links is requested.'),
+            sources: z
+              .array(
+                z
+                  .object({
+                    url: z.string().describe('Source URL.'),
+                    note: z.string().describe('Source note.'),
+                  })
+                  .describe('Source record.'),
+              )
+              .optional()
+              .describe('Provenance sources when include=sources is requested.'),
+            media: z
+              .array(
+                z
+                  .object({
+                    url: z.string().describe('Media URL.'),
+                    note: z.string().describe('Media description.'),
+                  })
+                  .describe('Media link record.'),
+              )
+              .optional()
+              .describe('Media links when include=media is requested.'),
+            documents: z
+              .array(
+                z
+                  .object({
+                    url: z.string().describe('Document URL.'),
+                    note: z.string().describe('Document description.'),
+                  })
+                  .describe('Document link record.'),
+              )
+              .optional()
+              .describe('Document links when include=documents is requested.'),
             participants: z
               .array(
                 z
@@ -104,7 +148,10 @@ export const searchEvents = tool('openstates_search_events', {
                     entity_type: z
                       .string()
                       .describe('Entity type (e.g., "organization", "person").'),
-                    role: z.string().describe('Participant role.'),
+                    role: z
+                      .string()
+                      .optional()
+                      .describe('Participant role. Absent when upstream omits it.'),
                   })
                   .describe('Participant record.'),
               )
@@ -269,7 +316,11 @@ export const searchEvents = tool('openstates_search_events', {
       }
       if (event.participants?.length) {
         lines.push(
-          `**Participants:** ${event.participants.map((p) => `${p.name} (${p.role}, ${p.entity_type})`).join(', ')}`,
+          `**Participants:** ${event.participants
+            .map((p) =>
+              p.role ? `${p.name} (${p.role}, ${p.entity_type})` : `${p.name} (${p.entity_type})`,
+            )
+            .join(', ')}`,
         );
       }
       if (event.agenda?.length) {
@@ -284,6 +335,22 @@ export const searchEvents = tool('openstates_search_events', {
             );
           }
         }
+      }
+      if (event.links?.length) {
+        lines.push(`**Links:** ${event.links.map((l) => `${l.note}: ${l.url}`).join(', ')}`);
+      }
+      if (event.sources?.length) {
+        lines.push(
+          `**Sources:** ${event.sources.map((s) => (s.note ? `${s.url} (${s.note})` : s.url)).join(', ')}`,
+        );
+      }
+      if (event.media?.length) {
+        lines.push(`**Media:** ${event.media.map((m) => `${m.note}: ${m.url}`).join(', ')}`);
+      }
+      if (event.documents?.length) {
+        lines.push(
+          `**Documents:** ${event.documents.map((d) => `${d.note}: ${d.url}`).join(', ')}`,
+        );
       }
     }
     return [{ type: 'text', text: lines.join('\n') }];

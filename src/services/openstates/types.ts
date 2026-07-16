@@ -184,7 +184,10 @@ export interface Person {
   name: string;
   offices?: PersonOffice[];
   openstates_url: string;
+  other_identifiers?: Array<{ identifier: string; scheme: string }>;
+  other_names?: Array<{ name: string; note: string }>;
   party: string;
+  sources?: Array<{ url: string; note: string }>;
 }
 
 export interface PersonListResponse {
@@ -230,7 +233,8 @@ export interface EventParticipant {
   name: string;
   organization?: unknown;
   person?: unknown;
-  role: string;
+  /** Optional upstream — Open States omits `role` for some participants, so requiring it here would reject valid events. */
+  role?: string;
 }
 
 export interface AgendaRelatedEntity {
@@ -287,6 +291,18 @@ export interface RunPlan {
   success?: boolean;
 }
 
+/**
+ * An organization within a jurisdiction (a chamber, the legislature, or an executive body),
+ * returned by `/jurisdictions` under `include=organizations`. Every field is optional: the
+ * upstream embed is undocumented for this endpoint, so a conservative shape avoids rejecting a
+ * real payload that omits any of `id`/`name`/`classification`.
+ */
+export interface JurisdictionOrganization {
+  classification?: string;
+  id?: string;
+  name?: string;
+}
+
 export interface Jurisdiction {
   classification: string;
   id: string;
@@ -295,7 +311,7 @@ export interface Jurisdiction {
   latest_runs?: RunPlan[];
   legislative_sessions?: LegislativeSession[];
   name: string;
-  organizations?: unknown[];
+  organizations?: JurisdictionOrganization[];
   url: string;
 }
 

@@ -253,3 +253,49 @@ describe('getBill — Zod input validation', () => {
     }
   });
 });
+
+/**
+ * Regression coverage for the include-enrichment data loss (issue #18). get_bill
+ * already surfaces votes/versions/documents/related_bills, but other_titles,
+ * other_identifiers, and sources were advertised via `include` yet dropped: the
+ * output schema stripped the keys and format() never rendered them. Fixture
+ * shapes mirror the Bill interface in src/services/openstates/types.ts.
+ */
+describe('getBill — include enrichment surfacing (other_titles, other_identifiers, sources)', () => {
+  const enrichedBill = {
+    ...baseBill,
+    other_titles: [{ title: 'An act concerning public safety', note: 'as introduced' }],
+    other_identifiers: [{ identifier: 'HB1000-2025', scheme: 'lwrsn' }],
+    sources: [{ url: 'https://leg.wa.gov/HB1000', note: 'Legislature bill page' }],
+  };
+
+  /**
+   * structuredContent path. getBill.output previously stripped these three keys
+   * (Zod drops undeclared keys), so this parse dropped them and the assertions
+   * failed pre-fix.
+   */
+  it('retains other_titles, other_identifiers, and sources through the output schema', () => {
+    const parsed = getBill.output.parse(enrichedBill);
+    expect(parsed.other_titles).toEqual([
+      { title: 'An act concerning public safety', note: 'as introduced' },
+    ]);
+    expect(parsed.other_identifiers).toEqual([{ identifier: 'HB1000-2025', scheme: 'lwrsn' }]);
+    expect(parsed.sources).toEqual([
+      { url: 'https://leg.wa.gov/HB1000', note: 'Legislature bill page' },
+    ]);
+  });
+
+  /**
+   * content[] path. format() rendered none of these three pre-fix.
+   */
+  it('renders other_titles, other_identifiers, and sources in format() text', () => {
+    const blocks = getBill.format!(enrichedBill);
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('An act concerning public safety');
+    expect(text).toContain('as introduced');
+    expect(text).toContain('HB1000-2025');
+    expect(text).toContain('lwrsn');
+    expect(text).toContain('https://leg.wa.gov/HB1000');
+    expect(text).toContain('Legislature bill page');
+  });
+});

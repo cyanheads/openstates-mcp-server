@@ -65,6 +65,9 @@ function normalizePerson(raw: RawPerson): Person {
   };
   if (raw.offices?.length) person.offices = raw.offices;
   if (raw.links?.length) person.links = raw.links;
+  if (raw.other_names?.length) person.other_names = raw.other_names;
+  if (raw.other_identifiers?.length) person.other_identifiers = raw.other_identifiers;
+  if (raw.sources?.length) person.sources = raw.sources;
   return person;
 }
 

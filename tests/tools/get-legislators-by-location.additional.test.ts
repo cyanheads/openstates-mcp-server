@@ -192,3 +192,63 @@ describe('getLegislatorsByLocation — Zod input validation', () => {
     expect(() => getLegislatorsByLocation.input.parse({ latitude: 47.6 })).toThrow();
   });
 });
+
+/**
+ * Regression coverage for the include-enrichment data loss (issue #18).
+ * get_legislators_by_location advertises other_names, other_identifiers, and sources via
+ * `include`, but each was dropped before MCP serialization at TWO layers: the service's
+ * normalizePerson() — shared with search_people through getPeopleByGeo — copied only
+ * offices/links (covered in tests/services/openstates-service.test.ts), and the tool output
+ * schema declared no fields for them, so Zod stripped the keys on the structuredContent path
+ * and format() never rendered them on the content[] path. Fixture shapes mirror the Person
+ * interface in src/services/openstates/types.ts.
+ */
+describe('getLegislatorsByLocation — include enrichment surfacing', () => {
+  const enrichedPerson = {
+    ...mockPerson,
+    other_names: [{ name: 'Jane A. Smith', note: 'ballot name' }],
+    other_identifiers: [{ identifier: 'WA000123', scheme: 'legacy_openstates' }],
+    sources: [{ url: 'https://leg.wa.gov/senators/smith', note: 'official roster' }],
+  };
+
+  /** structuredContent path — output.parse strips undeclared keys, which is how these dropped. */
+  it('retains other_names/other_identifiers/sources through the output schema', async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    const mockService = {
+      getPeopleByGeo: vi.fn().mockResolvedValue({
+        results: [enrichedPerson],
+        pagination: { page: 1, per_page: 1, max_page: 1, total_items: 1 },
+      }),
+    };
+    vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
+
+    const ctx = createMockContext();
+    const input = getLegislatorsByLocation.input.parse({
+      latitude: 47.6,
+      longitude: -122.3,
+      include: ['other_names', 'other_identifiers', 'sources'],
+    });
+    const handlerResult = await getLegislatorsByLocation.handler(input, ctx);
+    const person = getLegislatorsByLocation.output.parse(handlerResult).legislators[0];
+
+    expect(person.other_names).toEqual([{ name: 'Jane A. Smith', note: 'ballot name' }]);
+    expect(person.other_identifiers).toEqual([
+      { identifier: 'WA000123', scheme: 'legacy_openstates' },
+    ]);
+    expect(person.sources).toEqual([
+      { url: 'https://leg.wa.gov/senators/smith', note: 'official roster' },
+    ]);
+  });
+
+  /** content[] path. format() rendered none of these three pre-fix. */
+  it('renders other_names/other_identifiers/sources in format() text', () => {
+    const blocks = getLegislatorsByLocation.format!({ legislators: [enrichedPerson] });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('Jane A. Smith');
+    expect(text).toContain('ballot name');
+    expect(text).toContain('WA000123');
+    expect(text).toContain('legacy_openstates');
+    expect(text).toContain('https://leg.wa.gov/senators/smith');
+    expect(text).toContain('official roster');
+  });
+});

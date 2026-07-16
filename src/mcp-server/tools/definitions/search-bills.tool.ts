@@ -192,6 +192,140 @@ export const searchBills = tool('openstates_search_bills', {
               )
               .optional()
               .describe('Bill abstracts when include=abstracts is requested.'),
+            other_titles: z
+              .array(
+                z
+                  .object({
+                    title: z.string().describe('Alternate bill title.'),
+                    note: z.string().describe('Note describing the alternate title.'),
+                  })
+                  .describe('Alternate title record.'),
+              )
+              .optional()
+              .describe('Alternate titles when include=other_titles is requested.'),
+            other_identifiers: z
+              .array(
+                z
+                  .object({
+                    identifier: z.string().describe('Alternate bill identifier.'),
+                    scheme: z.string().describe('Identifier scheme (the issuing system).'),
+                  })
+                  .describe('Alternate identifier record.'),
+              )
+              .optional()
+              .describe('Alternate identifiers when include=other_identifiers is requested.'),
+            sources: z
+              .array(
+                z
+                  .object({
+                    url: z.string().describe('Source URL.'),
+                    note: z.string().describe('Source note.'),
+                  })
+                  .describe('Source record.'),
+              )
+              .optional()
+              .describe('Source documents when include=sources is requested.'),
+            versions: z
+              .array(
+                z
+                  .object({
+                    id: z.string().describe('Version ID.'),
+                    note: z.string().describe('Version note.'),
+                    date: z.string().describe('Version date.'),
+                    links: z
+                      .array(
+                        z
+                          .object({
+                            url: z.string().describe('Document URL.'),
+                            media_type: z.string().describe('MIME type.'),
+                          })
+                          .describe('Document link.'),
+                      )
+                      .describe('Document links.'),
+                  })
+                  .describe('Bill text version record.'),
+              )
+              .optional()
+              .describe('Bill text versions when include=versions is requested.'),
+            documents: z
+              .array(
+                z
+                  .object({
+                    id: z.string().describe('Document ID.'),
+                    note: z.string().describe('Document note.'),
+                    date: z.string().describe('Document date.'),
+                    links: z
+                      .array(
+                        z
+                          .object({
+                            url: z.string().describe('Document URL.'),
+                            media_type: z.string().describe('MIME type.'),
+                          })
+                          .describe('Document link.'),
+                      )
+                      .describe('Document links.'),
+                  })
+                  .describe('Bill document record.'),
+              )
+              .optional()
+              .describe('Bill documents (fiscal notes, etc.) when include=documents is requested.'),
+            votes: z
+              .array(
+                z
+                  .object({
+                    id: z.string().describe('Vote event ID.'),
+                    motion_text: z.string().describe('Motion text.'),
+                    start_date: z.string().describe('Vote date.'),
+                    result: z.string().describe('Vote result: "pass" or "fail".'),
+                    identifier: z.string().describe('Vote identifier.'),
+                    counts: z
+                      .array(
+                        z
+                          .object({
+                            option: z
+                              .string()
+                              .describe('Vote option (e.g., "yes", "no", "absent").'),
+                            value: z.number().describe('Count of votes for this option.'),
+                          })
+                          .describe('Vote tally entry.'),
+                      )
+                      .describe('Vote tallies by option.'),
+                    votes: z
+                      .array(
+                        z
+                          .object({
+                            option: z.string().describe('How this legislator voted.'),
+                            voter_name: z.string().describe('Voter name.'),
+                            voter: z
+                              .object({
+                                id: z.string().describe('OCD person ID.'),
+                                name: z.string().describe('Person name.'),
+                              })
+                              .optional()
+                              .describe('Linked person record when available.'),
+                          })
+                          .describe('Individual legislator vote.'),
+                      )
+                      .describe('Per-legislator vote positions.'),
+                  })
+                  .describe('Vote event record.'),
+              )
+              .optional()
+              .describe('Vote events when include=votes is requested.'),
+            related_bills: z
+              .array(
+                z
+                  .object({
+                    identifier: z.string().describe('Related bill identifier.'),
+                    legislative_session: z.string().describe('Session of the related bill.'),
+                    relation_type: z
+                      .string()
+                      .describe('Relationship type (e.g., "companion", "identical").'),
+                  })
+                  .describe('Related bill record.'),
+              )
+              .optional()
+              .describe('Related bills when include=related_bills is requested.'),
           })
           .describe('Bill record.'),
       )
@@ -367,6 +501,69 @@ export const searchBills = tool('openstates_search_bills', {
           lines.push(
             `- #${a.order} ${a.date}: ${a.description}${cls} — ${a.organization.name} (${a.organization.classification})`,
           );
+        }
+      }
+      if (bill.other_titles?.length) {
+        lines.push('');
+        lines.push('**Other titles:**');
+        for (const t of bill.other_titles) {
+          lines.push(`- ${t.title}${t.note ? ` _(${t.note})_` : ''}`);
+        }
+      }
+      if (bill.other_identifiers?.length) {
+        lines.push('');
+        lines.push('**Other identifiers:**');
+        for (const oi of bill.other_identifiers) {
+          lines.push(`- ${oi.identifier} (${oi.scheme})`);
+        }
+      }
+      if (bill.votes?.length) {
+        lines.push('');
+        lines.push('**Votes:**');
+        for (const v of bill.votes) {
+          lines.push(`### ${v.motion_text} (${v.start_date})`);
+          lines.push(`**Result:** ${v.result} | **ID:** ${v.id} | **Identifier:** ${v.identifier}`);
+          const counts = v.counts.map((c) => `${c.option}: ${c.value}`).join(', ');
+          lines.push(`**Tally:** ${counts}`);
+          if (v.votes.length > 0) {
+            lines.push('**Individual votes:**');
+            for (const pv of v.votes) {
+              const voterLink = pv.voter ? ` (ID: ${pv.voter.id}, name: ${pv.voter.name})` : '';
+              lines.push(`- ${pv.voter_name}${voterLink}: ${pv.option}`);
+            }
+          }
+        }
+      }
+      if (bill.versions?.length) {
+        lines.push('');
+        lines.push('**Bill Text Versions:**');
+        for (const v of bill.versions) {
+          lines.push(
+            `- [${v.id}] ${v.note} (${v.date}): ${v.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
+          );
+        }
+      }
+      if (bill.documents?.length) {
+        lines.push('');
+        lines.push('**Documents:**');
+        for (const d of bill.documents) {
+          lines.push(
+            `- [${d.id}] ${d.note} (${d.date}): ${d.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
+          );
+        }
+      }
+      if (bill.related_bills?.length) {
+        lines.push('');
+        lines.push('**Related Bills:**');
+        for (const r of bill.related_bills) {
+          lines.push(`- ${r.identifier} (${r.legislative_session}) — ${r.relation_type}`);
+        }
+      }
+      if (bill.sources?.length) {
+        lines.push('');
+        lines.push('**Sources:**');
+        for (const s of bill.sources) {
+          lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
         }
       }
     }

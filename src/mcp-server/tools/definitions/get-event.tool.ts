@@ -26,7 +26,9 @@ export const getEvent = tool('openstates_get_event', {
     include: z
       .array(EventIncludeEnum)
       .optional()
-      .describe('Related data to inline. "agenda" and "participants" are most useful.'),
+      .describe(
+        'Related data to inline. "agenda" and "participants" are most useful; "links", "media", and "documents" add related URLs, recordings, and files, and "sources" the provenance URLs behind the record.',
+      ),
   }),
   output: z.object({
     id: z.string().describe('OCD event ID.'),
@@ -82,13 +84,27 @@ export const getEvent = tool('openstates_get_event', {
       )
       .optional()
       .describe('Document links when include=documents is requested.'),
+    sources: z
+      .array(
+        z
+          .object({
+            url: z.string().describe('Source URL.'),
+            note: z.string().describe('Source note.'),
+          })
+          .describe('Source record.'),
+      )
+      .optional()
+      .describe('Provenance sources when include=sources is requested.'),
     participants: z
       .array(
         z
           .object({
             name: z.string().describe('Participant name.'),
             entity_type: z.string().describe('Entity type.'),
-            role: z.string().describe('Participant role.'),
+            role: z
+              .string()
+              .optional()
+              .describe('Participant role. Absent when upstream omits it.'),
           })
           .describe('Participant record.'),
       )
@@ -166,12 +182,13 @@ export const getEvent = tool('openstates_get_event', {
       ...(event.links ? { links: event.links } : {}),
       ...(event.media ? { media: event.media } : {}),
       ...(event.documents ? { documents: event.documents } : {}),
+      ...(event.sources ? { sources: event.sources } : {}),
       ...(event.participants
         ? {
             participants: event.participants.map((p) => ({
               name: p.name,
               entity_type: p.entity_type,
-              role: p.role,
+              ...(p.role !== undefined ? { role: p.role } : {}),
             })),
           }
         : {}),
@@ -212,7 +229,9 @@ export const getEvent = tool('openstates_get_event', {
       lines.push('');
       lines.push('## Participants');
       for (const p of result.participants) {
-        lines.push(`- ${p.name} (${p.role}) — ${p.entity_type}`);
+        lines.push(
+          p.role ? `- ${p.name} (${p.role}) — ${p.entity_type}` : `- ${p.name} — ${p.entity_type}`,
+        );
       }
     }
     if (result.agenda?.length) {
@@ -244,6 +263,11 @@ export const getEvent = tool('openstates_get_event', {
       lines.push('');
       lines.push('## Documents');
       for (const d of result.documents) lines.push(`- ${d.note}: ${d.url}`);
+    }
+    if (result.sources?.length) {
+      lines.push('');
+      lines.push('## Sources');
+      for (const s of result.sources) lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
     }
     return [{ type: 'text', text: lines.join('\n') }];
   },

@@ -244,3 +244,87 @@ describe('getEvent — format', () => {
     expect(() => getEvent.input.parse({ event_id: '' })).toThrow();
   });
 });
+
+/**
+ * Regression coverage for the include-enrichment data loss (issue #18). get_event advertises
+ * `sources` via `include` (links/media/documents already surfaced), but the handler rebuilds its
+ * return object field-by-field and never copied `sources`, and the output schema declared no
+ * field for it — so both the structuredContent and content[] paths lost it. Driving through the
+ * handler proves the rebuild now carries it. Fixture shape mirrors Event.sources ({ url, note }).
+ */
+describe('getEvent — sources include surfacing (issue #18)', () => {
+  let mockService: { getEvent: ReturnType<typeof vi.fn> };
+
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    mockService = { getEvent: vi.fn() };
+    vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
+  });
+
+  const enrichedEvent = {
+    ...baseEvent,
+    sources: [{ url: 'https://leg.ca.gov/event-source', note: 'official calendar' }],
+  };
+
+  it('carries sources through the handler rebuild and output schema', async () => {
+    mockService.getEvent.mockResolvedValue(enrichedEvent);
+    const ctx = createMockContext();
+    const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: ['sources'] });
+    const handlerResult = await getEvent.handler(input, ctx);
+    const event = getEvent.output.parse(handlerResult);
+    expect(event.sources).toEqual([
+      { url: 'https://leg.ca.gov/event-source', note: 'official calendar' },
+    ]);
+  });
+
+  it('renders sources in format() text', () => {
+    const blocks = getEvent.format!(enrichedEvent);
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('Sources');
+    expect(text).toContain('https://leg.ca.gov/event-source');
+    expect(text).toContain('official calendar');
+  });
+});
+
+/**
+ * Regression coverage for participant role sparsity (issue #19). Open States omits `role` on some
+ * participants; the output schema required a string, so a valid fetch converted into a
+ * serialization error, and format() printed the literal "undefined". Pre-fix, the handler maps
+ * `role: undefined` for the role-less participant and output.parse rejects it; format() emits
+ * "undefined".
+ */
+describe('getEvent — participant without upstream role (issue #19)', () => {
+  let mockService: { getEvent: ReturnType<typeof vi.fn> };
+
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    mockService = { getEvent: vi.fn() };
+    vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
+  });
+
+  const eventRolelessParticipant = {
+    ...baseEvent,
+    participants: [
+      { name: 'Committee on Transportation', entity_type: 'organization', role: 'host' },
+      { name: 'Jane Doe', entity_type: 'person' },
+    ],
+  };
+
+  it('accepts a role-less participant through the handler and output schema', async () => {
+    mockService.getEvent.mockResolvedValue(eventRolelessParticipant);
+    const ctx = createMockContext();
+    const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: ['participants'] });
+    const handlerResult = await getEvent.handler(input, ctx);
+    const event = getEvent.output.parse(handlerResult);
+    expect(event.participants).toHaveLength(2);
+    expect(event.participants?.[0].role).toBe('host');
+    expect(event.participants?.[1].role).toBeUndefined();
+  });
+
+  it('renders a role-less participant without printing "undefined"', () => {
+    const blocks = getEvent.format!(eventRolelessParticipant);
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('Jane Doe');
+    expect(text).not.toContain('undefined');
+  });
+});

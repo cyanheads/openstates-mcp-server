@@ -24,7 +24,7 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
       .array(JurisdictionIncludeEnum)
       .optional()
       .describe(
-        'Related data to inline. "legislative_sessions" returns all session identifiers and date ranges — required when you need to discover valid session values for bill searches.',
+        'Related data to inline. "legislative_sessions" returns all session identifiers and date ranges — required when you need to discover valid session values for bill searches. "organizations" lists the jurisdiction\'s legislative chambers and executive bodies, and "latest_runs" the recent scraper run history.',
       ),
     page: z.coerce.number().int().min(1).default(1).describe('Page number (1-indexed).'),
     per_page: z.coerce
@@ -70,6 +70,48 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
               )
               .optional()
               .describe('Legislative sessions when include=legislative_sessions is requested.'),
+            organizations: z
+              .array(
+                z
+                  .object({
+                    id: z.string().optional().describe('OCD organization ID.'),
+                    name: z
+                      .string()
+                      .optional()
+                      .describe('Organization name (e.g., "Washington State Senate").'),
+                    classification: z
+                      .string()
+                      .optional()
+                      .describe('Organization type (e.g., "upper", "lower", "legislature").'),
+                  })
+                  .describe('Organization record.'),
+              )
+              .optional()
+              .describe(
+                'Legislative chambers and executive bodies when include=organizations is requested.',
+              ),
+            latest_runs: z
+              .array(
+                z
+                  .object({
+                    start_time: z
+                      .string()
+                      .describe('ISO 8601 timestamp when the scraper run started.'),
+                    end_time: z
+                      .string()
+                      .optional()
+                      .describe(
+                        'ISO 8601 timestamp when the run finished. Absent when unrecorded.',
+                      ),
+                    success: z
+                      .boolean()
+                      .optional()
+                      .describe('Whether the run succeeded. Absent when not recorded.'),
+                  })
+                  .describe('Scraper run record.'),
+              )
+              .optional()
+              .describe('Recent scraper runs when include=latest_runs is requested.'),
           })
           .describe('Jurisdiction record.'),
       )
@@ -133,6 +175,23 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
           lines.push(
             `- \`${s.identifier}\` — ${s.name} (${s.classification}) ${s.start_date}–${s.end_date}`,
           );
+        }
+      }
+      if (jur.organizations?.length) {
+        lines.push('');
+        lines.push('**Organizations:**');
+        for (const o of jur.organizations) {
+          const cls = o.classification ? ` (${o.classification})` : '';
+          const id = o.id ? ` — ${o.id}` : '';
+          lines.push(`- ${o.name ?? '(unnamed)'}${cls}${id}`);
+        }
+      }
+      if (jur.latest_runs?.length) {
+        lines.push('');
+        lines.push('**Latest runs:**');
+        for (const r of jur.latest_runs) {
+          const end = r.end_time ? ` → ${r.end_time}` : '';
+          lines.push(`- ${r.start_time}${end} (success: ${r.success ?? 'n/a'})`);
         }
       }
     }

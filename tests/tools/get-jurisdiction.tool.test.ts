@@ -115,3 +115,61 @@ describe('getJurisdiction', () => {
     expect(text).toContain('2025 Regular Session');
   });
 });
+
+/**
+ * Regression coverage for the include-enrichment data loss (issue #18). get_jurisdiction
+ * advertises organizations and latest_runs via `include`, but the handler rebuilds its return
+ * object field-by-field and copied only legislative_sessions, and the output schema declared no
+ * fields for them (organizations was even untyped upstream) — so both the structuredContent and
+ * content[] paths lost the data. Driving through the handler proves the rebuild now carries them.
+ * Fixture shapes mirror JurisdictionOrganization ({ id?, name?, classification? }) and RunPlan
+ * ({ start_time, end_time?, success? }) in src/services/openstates/types.ts.
+ */
+describe('getJurisdiction — include enrichment surfacing (organizations, latest_runs)', () => {
+  let mockService: { getJurisdiction: ReturnType<typeof vi.fn> };
+
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    mockService = { getJurisdiction: vi.fn() };
+    vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
+  });
+
+  const enrichedJurisdiction = {
+    ...mockJurisdiction,
+    organizations: [
+      { id: 'ocd-organization/house', name: 'Washington State House', classification: 'lower' },
+    ],
+    latest_runs: [
+      { start_time: '2025-05-19T02:00:00Z', end_time: '2025-05-19T02:08:00Z', success: true },
+    ],
+  };
+
+  it('carries organizations and latest_runs through the handler rebuild and output schema', async () => {
+    mockService.getJurisdiction.mockResolvedValue(enrichedJurisdiction);
+    const ctx = createMockContext();
+    const input = getJurisdiction.input.parse({
+      jurisdiction_id: 'wa',
+      include: ['organizations', 'latest_runs'],
+    });
+    const handlerResult = await getJurisdiction.handler(input, ctx);
+    const jur = getJurisdiction.output.parse(handlerResult);
+    expect(jur.organizations).toEqual([
+      { id: 'ocd-organization/house', name: 'Washington State House', classification: 'lower' },
+    ]);
+    expect(jur.latest_runs).toEqual([
+      { start_time: '2025-05-19T02:00:00Z', end_time: '2025-05-19T02:08:00Z', success: true },
+    ]);
+  });
+
+  /** content[] path — format() rendered neither pre-fix. */
+  it('renders organizations and latest_runs in format() text', () => {
+    const blocks = getJurisdiction.format!(enrichedJurisdiction);
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('Washington State House');
+    expect(text).toContain('lower');
+    expect(text).toContain('ocd-organization/house');
+    expect(text).toContain('2025-05-19T02:00:00Z');
+    expect(text).toContain('2025-05-19T02:08:00Z');
+    expect(text).toContain('success');
+  });
+});

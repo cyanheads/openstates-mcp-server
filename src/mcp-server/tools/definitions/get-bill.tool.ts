@@ -228,6 +228,39 @@ export const getBill = tool('openstates_get_bill', {
       )
       .optional()
       .describe('Related bills when include=related_bills is requested.'),
+    other_titles: z
+      .array(
+        z
+          .object({
+            title: z.string().describe('Alternate bill title.'),
+            note: z.string().describe('Note describing the alternate title.'),
+          })
+          .describe('Alternate title record.'),
+      )
+      .optional()
+      .describe('Alternate titles when include=other_titles is requested.'),
+    other_identifiers: z
+      .array(
+        z
+          .object({
+            identifier: z.string().describe('Alternate bill identifier.'),
+            scheme: z.string().describe('Identifier scheme (the issuing system).'),
+          })
+          .describe('Alternate identifier record.'),
+      )
+      .optional()
+      .describe('Alternate identifiers when include=other_identifiers is requested.'),
+    sources: z
+      .array(
+        z
+          .object({
+            url: z.string().describe('Source URL.'),
+            note: z.string().describe('Source note.'),
+          })
+          .describe('Source record.'),
+      )
+      .optional()
+      .describe('Source documents when include=sources is requested.'),
   }),
   errors: [
     {
@@ -377,6 +410,30 @@ export const getBill = tool('openstates_get_bill', {
       lines.push('## Related Bills');
       for (const r of result.related_bills) {
         lines.push(`- ${r.identifier} (${r.legislative_session}) — ${r.relation_type}`);
+      }
+    }
+
+    if (result.other_titles?.length) {
+      lines.push('');
+      lines.push('## Other Titles');
+      for (const t of result.other_titles) {
+        lines.push(`- ${t.title}${t.note ? ` _(${t.note})_` : ''}`);
+      }
+    }
+
+    if (result.other_identifiers?.length) {
+      lines.push('');
+      lines.push('## Other Identifiers');
+      for (const oi of result.other_identifiers) {
+        lines.push(`- ${oi.identifier} (${oi.scheme})`);
+      }
+    }
+
+    if (result.sources?.length) {
+      lines.push('');
+      lines.push('## Sources');
+      for (const s of result.sources) {
+        lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
       }
     }
 

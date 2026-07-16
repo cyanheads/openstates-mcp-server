@@ -198,3 +198,100 @@ describe('searchEvents', () => {
     expect(() => searchEvents.input.parse({ jurisdiction: 'wa', before: '04/01/2025' })).toThrow();
   });
 });
+
+/**
+ * Regression coverage for the include-enrichment data loss (issue #18). search_events advertises
+ * links, sources, media, and documents via `include`, but the output schema declared no fields
+ * for them, so strict output parsing stripped them from both the structuredContent and content[]
+ * paths. Fixture shapes mirror the Event interface in src/services/openstates/types.ts
+ * (links/media/documents are PersonLink[] = { note, url }; sources is { url, note }).
+ */
+describe('searchEvents — include enrichment surfacing (links, sources, media, documents)', () => {
+  const enrichedEvent = {
+    ...mockEvent,
+    links: [{ note: 'Hearing notice', url: 'https://leg.wa.gov/notice' }],
+    sources: [{ url: 'https://leg.wa.gov/source', note: 'official calendar' }],
+    media: [{ note: 'Video recording', url: 'https://tvw.org/video/1' }],
+    documents: [{ note: 'Agenda PDF', url: 'https://leg.wa.gov/agenda.pdf' }],
+  };
+  const enrichedResult = {
+    results: [enrichedEvent],
+    pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+  };
+
+  it('carries links, sources, media, and documents through the output schema', async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    const mockService = { searchEvents: vi.fn().mockResolvedValue(enrichedResult) };
+    vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
+
+    const ctx = createMockContext();
+    const input = searchEvents.input.parse({
+      jurisdiction: 'wa',
+      include: ['links', 'sources', 'media', 'documents'],
+    });
+    const handlerResult = await searchEvents.handler(input, ctx);
+    const parsed = searchEvents.output.parse(handlerResult);
+    const event = parsed.results[0];
+    expect(event.links).toEqual([{ note: 'Hearing notice', url: 'https://leg.wa.gov/notice' }]);
+    expect(event.sources).toEqual([
+      { url: 'https://leg.wa.gov/source', note: 'official calendar' },
+    ]);
+    expect(event.media).toEqual([{ note: 'Video recording', url: 'https://tvw.org/video/1' }]);
+    expect(event.documents).toEqual([{ note: 'Agenda PDF', url: 'https://leg.wa.gov/agenda.pdf' }]);
+  });
+
+  /** content[] path — format() rendered none of these pre-fix. */
+  it('renders links, sources, media, and documents in format() text', () => {
+    const blocks = searchEvents.format!(enrichedResult);
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('Hearing notice');
+    expect(text).toContain('https://leg.wa.gov/notice');
+    expect(text).toContain('https://leg.wa.gov/source');
+    expect(text).toContain('official calendar');
+    expect(text).toContain('Video recording');
+    expect(text).toContain('https://tvw.org/video/1');
+    expect(text).toContain('Agenda PDF');
+    expect(text).toContain('https://leg.wa.gov/agenda.pdf');
+  });
+});
+
+/**
+ * Regression coverage for participant role sparsity (issue #19). Open States omits `role` on some
+ * participants; the output schema required a string, so a valid search converted into a
+ * serialization error, and format() printed the literal "undefined". Pre-fix, output.parse throws
+ * on the role-less participant and format() emits "undefined".
+ */
+describe('searchEvents — participant without upstream role (issue #19)', () => {
+  const eventRolelessParticipant = {
+    ...mockEvent,
+    participants: [
+      { name: 'Committee on Transportation', entity_type: 'organization', role: 'host' },
+      { name: 'Jane Doe', entity_type: 'person' },
+    ],
+  };
+  const rolelessResult = {
+    results: [eventRolelessParticipant],
+    pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+  };
+
+  it('accepts a role-less participant through the output schema', async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    const mockService = { searchEvents: vi.fn().mockResolvedValue(rolelessResult) };
+    vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
+
+    const ctx = createMockContext();
+    const input = searchEvents.input.parse({ jurisdiction: 'ca', include: ['participants'] });
+    const handlerResult = await searchEvents.handler(input, ctx);
+    const parsed = searchEvents.output.parse(handlerResult);
+    expect(parsed.results[0].participants).toHaveLength(2);
+    expect(parsed.results[0].participants?.[0].role).toBe('host');
+    expect(parsed.results[0].participants?.[1].role).toBeUndefined();
+  });
+
+  it('renders a role-less participant without printing "undefined"', () => {
+    const blocks = searchEvents.format!(rolelessResult);
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('Jane Doe');
+    expect(text).not.toContain('undefined');
+  });
+});
