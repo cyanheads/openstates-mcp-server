@@ -68,6 +68,96 @@ function normalizePerson(raw: RawPerson): Person {
   return person;
 }
 
+/**
+ * Upper bound on the number of pages `listJurisdictions` will auto-merge to satisfy the
+ * one-call inventory promise. The `classification=state` set is 56 (50 states + DC + 5 US
+ * territories) against an upstream `per_page` ceiling of 52, so it completes in 2 pages;
+ * anything larger (e.g. municipalities) falls through to plain single-page pagination rather
+ * than draining the collection.
+ */
+const MAX_JURISDICTION_MERGE_PAGES = 2;
+
+/**
+ * Full jurisdiction display name (lowercased) → Open States abbreviation, covering the entire
+ * `classification=state` inventory: 50 states, DC, and 5 US territories.
+ *
+ * The `/committees` endpoint returns HTTP 500 when a full jurisdiction *name* is combined with a
+ * `chamber` filter, while the abbreviation and OCD-ID forms resolve correctly; normalizing a name
+ * to its abbreviation before the request sidesteps the upstream fault. `/bills`, `/people`, and
+ * `/events` do not exhibit it, so this map is applied only in `searchCommittees`. A static map
+ * keeps normalization deterministic and adds no request.
+ */
+const JURISDICTION_NAME_TO_ABBR: Record<string, string> = {
+  alabama: 'al',
+  alaska: 'ak',
+  arizona: 'az',
+  arkansas: 'ar',
+  california: 'ca',
+  colorado: 'co',
+  connecticut: 'ct',
+  delaware: 'de',
+  florida: 'fl',
+  georgia: 'ga',
+  hawaii: 'hi',
+  idaho: 'id',
+  illinois: 'il',
+  indiana: 'in',
+  iowa: 'ia',
+  kansas: 'ks',
+  kentucky: 'ky',
+  louisiana: 'la',
+  maine: 'me',
+  maryland: 'md',
+  massachusetts: 'ma',
+  michigan: 'mi',
+  minnesota: 'mn',
+  mississippi: 'ms',
+  missouri: 'mo',
+  montana: 'mt',
+  nebraska: 'ne',
+  nevada: 'nv',
+  'new hampshire': 'nh',
+  'new jersey': 'nj',
+  'new mexico': 'nm',
+  'new york': 'ny',
+  'north carolina': 'nc',
+  'north dakota': 'nd',
+  ohio: 'oh',
+  oklahoma: 'ok',
+  oregon: 'or',
+  pennsylvania: 'pa',
+  'rhode island': 'ri',
+  'south carolina': 'sc',
+  'south dakota': 'sd',
+  tennessee: 'tn',
+  texas: 'tx',
+  utah: 'ut',
+  vermont: 'vt',
+  virginia: 'va',
+  washington: 'wa',
+  'west virginia': 'wv',
+  wisconsin: 'wi',
+  wyoming: 'wy',
+  'district of columbia': 'dc',
+  'american samoa': 'as',
+  guam: 'gu',
+  'northern mariana islands': 'mp',
+  'puerto rico': 'pr',
+  // Open States' canonical display name is "United States Virgin Islands"; the shorter form is
+  // carried too so either spelling a caller might copy resolves to the abbreviation.
+  'united states virgin islands': 'vi',
+  'virgin islands': 'vi',
+};
+
+/**
+ * Resolve a `jurisdiction` input to a `/committees`-safe form. A recognized full state or
+ * territory name maps to its abbreviation; abbreviations and OCD-IDs (never name-map keys) and
+ * any unrecognized value pass through unchanged.
+ */
+function normalizeCommitteeJurisdiction(value: string): string {
+  return JURISDICTION_NAME_TO_ABBR[value.trim().toLowerCase()] ?? value;
+}
+
 export class OpenStatesApiService {
   private readonly baseUrl: string;
   private readonly apiKey: string;
@@ -361,7 +451,9 @@ export class OpenStatesApiService {
     ctx: Context,
   ): Promise<CommitteeListResponse> {
     const queryParams: Record<string, unknown> = {
-      jurisdiction: params.jurisdiction,
+      jurisdiction: params.jurisdiction
+        ? normalizeCommitteeJurisdiction(params.jurisdiction)
+        : undefined,
       classification: params.classification,
       chamber: params.chamber,
       parent: params.parent,
@@ -425,19 +517,65 @@ export class OpenStatesApiService {
 
   // --- Jurisdictions ---
 
-  listJurisdictions(
+  /** One upstream `/jurisdictions` page, as-is. */
+  private fetchJurisdictionsPage(
+    params: JurisdictionListParams,
+    page: number,
+    perPage: number,
+    ctx: Context,
+  ): Promise<JurisdictionListResponse> {
+    const url = this.buildUrl('/jurisdictions', {
+      classification: params.classification ?? 'state',
+      include: params.include,
+      page,
+      per_page: perPage,
+    });
+    ctx.log.debug('Listing jurisdictions', {
+      classification: params.classification ?? 'state',
+      page,
+      per_page: perPage,
+    });
+    return this.fetchJson<JurisdictionListResponse>(url, ctx);
+  }
+
+  /**
+   * The `classification=state` inventory (50 states + DC + 5 US territories = 56) has outgrown
+   * the upstream `per_page` ceiling of 52 (HTTP 400 above it), so the advertised one-call
+   * inventory no longer fits a single page. For the default full-inventory request — page 1,
+   * whose complete set spans at most `MAX_JURISDICTION_MERGE_PAGES` pages — the remaining pages
+   * are fetched and merged into one synthesized response, the same reassembly `searchLegislature`
+   * does for the chamber union. Explicit deep paging (`page > 1`) and collections too large to
+   * complete within the bound (e.g. municipalities) fall through to plain single-page pagination.
+   */
+  async listJurisdictions(
     params: JurisdictionListParams,
     ctx: Context,
   ): Promise<JurisdictionListResponse> {
-    const queryParams: Record<string, unknown> = {
+    const perPage = params.per_page ?? 52;
+    const page = params.page ?? 1;
+    const head = await this.fetchJurisdictionsPage(params, page, perPage, ctx);
+
+    const { total_items: total, max_page: maxPage } = head.pagination;
+    if (page !== 1 || maxPage <= 1 || maxPage > MAX_JURISDICTION_MERGE_PAGES) {
+      return head;
+    }
+
+    const rest = await Promise.all(
+      Array.from({ length: maxPage - 1 }, (_, i) =>
+        this.fetchJurisdictionsPage(params, i + 2, perPage, ctx),
+      ),
+    );
+    const results = [head, ...rest].flatMap((r) => r.results);
+    ctx.log.debug('Merged jurisdiction inventory', {
       classification: params.classification ?? 'state',
-      include: params.include,
-      page: params.page ?? 1,
-      per_page: params.per_page ?? 52,
+      pages: maxPage,
+      total,
+      returned: results.length,
+    });
+    return {
+      results,
+      pagination: { page: 1, per_page: results.length, max_page: 1, total_items: total },
     };
-    const url = this.buildUrl('/jurisdictions', queryParams);
-    ctx.log.debug('Listing jurisdictions', { classification: params.classification });
-    return this.fetchJson<JurisdictionListResponse>(url, ctx);
   }
 
   getJurisdiction(

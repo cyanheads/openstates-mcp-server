@@ -447,3 +447,261 @@ describe('searchPeople — other classifications are untouched', () => {
     expect(requests[0]?.has('org_classification')).toBe(false);
   });
 });
+
+// --------------------------------------------------------------------------
+// searchCommittees — jurisdiction normalization (state name → abbreviation)
+// --------------------------------------------------------------------------
+
+/**
+ * Captures the outgoing query string of each `/committees` request so a test can assert what
+ * `jurisdiction` value actually reached upstream. Returns a benign empty 200 — normalization
+ * happens before the request is built, so the response body is irrelevant here.
+ */
+function stubCommitteesEndpoint(): URLSearchParams[] {
+  const requests: URLSearchParams[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      requests.push(url.searchParams);
+      return Promise.resolve(
+        jsonResponse(200, {
+          results: [],
+          pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
+        }),
+      );
+    }),
+  );
+  return requests;
+}
+
+describe('searchCommittees — jurisdiction normalization', () => {
+  let svc: OpenStatesApiService;
+  let requests: URLSearchParams[];
+  const ctx = createMockContext();
+
+  beforeEach(() => {
+    requests = stubCommitteesEndpoint();
+    svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const jurisdictionSent = async (jurisdiction: string, chamber?: 'upper' | 'lower') => {
+    await svc.searchCommittees({ jurisdiction, chamber, page: 1, per_page: 10 }, ctx);
+    return requests.at(-1)?.get('jurisdiction');
+  };
+
+  it('resolves a full state name to its abbreviation before the request (the 500 trigger)', async () => {
+    // Live: /committees?jurisdiction=Texas&chamber=upper → HTTP 500; jurisdiction=tx → 200.
+    expect(await jurisdictionSent('Texas', 'upper')).toBe('tx');
+  });
+
+  it('resolves the name case-insensitively and trims surrounding whitespace', async () => {
+    expect(await jurisdictionSent('  texas ')).toBe('tx');
+  });
+
+  it('resolves DC and territory names, not just the 50 states', async () => {
+    expect(await jurisdictionSent('District of Columbia')).toBe('dc');
+    expect(await jurisdictionSent('Puerto Rico')).toBe('pr');
+    expect(await jurisdictionSent('United States Virgin Islands')).toBe('vi');
+    expect(await jurisdictionSent('Virgin Islands')).toBe('vi');
+  });
+
+  it('passes an abbreviation through unchanged (regression guard)', async () => {
+    expect(await jurisdictionSent('tx', 'upper')).toBe('tx');
+  });
+
+  it('passes an OCD-ID through unchanged (regression guard)', async () => {
+    expect(await jurisdictionSent('ocd-jurisdiction/country:us/state:tx/government')).toBe(
+      'ocd-jurisdiction/country:us/state:tx/government',
+    );
+  });
+
+  it('omits jurisdiction entirely when none is supplied (regression guard)', async () => {
+    await svc.searchCommittees({ chamber: 'upper', page: 1, per_page: 10 }, ctx);
+    expect(requests.at(-1)?.has('jurisdiction')).toBe(false);
+  });
+});
+
+// --------------------------------------------------------------------------
+// listJurisdictions — internal two-page merge for the complete state inventory
+// --------------------------------------------------------------------------
+
+/**
+ * The live `classification=state` collection, alphabetized so Washington / West Virginia /
+ * Wisconsin / Wyoming are the final four — they land on page 2 at per_page=52, exactly the four
+ * the default call omitted before the merge. 50 states + DC + 5 territories = 56.
+ */
+const STATE_JURISDICTION_NAMES = [
+  'Alabama',
+  'Alaska',
+  'American Samoa',
+  'Arizona',
+  'Arkansas',
+  'California',
+  'Colorado',
+  'Connecticut',
+  'Delaware',
+  'District of Columbia',
+  'Florida',
+  'Georgia',
+  'Guam',
+  'Hawaii',
+  'Idaho',
+  'Illinois',
+  'Indiana',
+  'Iowa',
+  'Kansas',
+  'Kentucky',
+  'Louisiana',
+  'Maine',
+  'Maryland',
+  'Massachusetts',
+  'Michigan',
+  'Minnesota',
+  'Mississippi',
+  'Missouri',
+  'Montana',
+  'Nebraska',
+  'Nevada',
+  'New Hampshire',
+  'New Jersey',
+  'New Mexico',
+  'New York',
+  'North Carolina',
+  'North Dakota',
+  'Northern Mariana Islands',
+  'Ohio',
+  'Oklahoma',
+  'Oregon',
+  'Pennsylvania',
+  'Puerto Rico',
+  'Rhode Island',
+  'South Carolina',
+  'South Dakota',
+  'Tennessee',
+  'Texas',
+  'United States Virgin Islands',
+  'Utah',
+  'Vermont',
+  'Virginia',
+  'Washington',
+  'West Virginia',
+  'Wisconsin',
+  'Wyoming',
+];
+
+function makeJurisdiction(name: string) {
+  return {
+    id: `ocd-jurisdiction/country:us/state:${name.toLowerCase().replace(/[^a-z]/g, '')}/government`,
+    name,
+    classification: 'state',
+    url: 'https://example.gov',
+    latest_bill_update: '2025-05-20T10:00:00Z',
+    latest_people_update: '2025-05-19T08:00:00Z',
+  };
+}
+
+/**
+ * Stands in for `/jurisdictions`, reproducing the upstream `per_page` ceiling of 52 measured on
+ * the live collection (HTTP 400 above it: `{"detail":"invalid per_page, must be in [1, 52]"}`).
+ * Serves the given pool with page-based slicing.
+ */
+function stubJurisdictionsEndpoint(pool: ReturnType<typeof makeJurisdiction>[]): URLSearchParams[] {
+  const requests: URLSearchParams[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      requests.push(url.searchParams);
+      const perPage = Number(url.searchParams.get('per_page'));
+      if (!Number.isInteger(perPage) || perPage < 1 || perPage > 52) {
+        return Promise.resolve(
+          jsonResponse(400, { detail: 'invalid per_page, must be in [1, 52]' }),
+        );
+      }
+      const maxPage = Math.max(1, Math.ceil(pool.length / perPage));
+      const page = Number(url.searchParams.get('page'));
+      if (!Number.isInteger(page) || page < 1 || page > maxPage) {
+        return Promise.resolve(
+          jsonResponse(404, { detail: `invalid page, must be in [1, ${maxPage}]` }),
+        );
+      }
+      const start = (page - 1) * perPage;
+      return Promise.resolve(
+        jsonResponse(200, {
+          results: pool.slice(start, start + perPage),
+          pagination: { page, per_page: perPage, max_page: maxPage, total_items: pool.length },
+        }),
+      );
+    }),
+  );
+  return requests;
+}
+
+describe('listJurisdictions — complete-inventory two-page merge', () => {
+  let svc: OpenStatesApiService;
+  let requests: URLSearchParams[];
+  const ctx = createMockContext();
+  const statePool = STATE_JURISDICTION_NAMES.map(makeJurisdiction);
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns all 56 jurisdictions in one response for the default call, including the four page-2 states', async () => {
+    requests = stubJurisdictionsEndpoint(statePool);
+    svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    const res = await svc.listJurisdictions(
+      { classification: 'state', page: 1, per_page: 52 },
+      ctx,
+    );
+    expect(res.results).toHaveLength(56);
+    expect(res.pagination.total_items).toBe(56);
+    expect(res.pagination.max_page).toBe(1);
+    const names = res.results.map((j) => j.name);
+    for (const s of ['Washington', 'West Virginia', 'Wisconsin', 'Wyoming']) {
+      expect(names).toContain(s);
+    }
+  });
+
+  it('fetches exactly the two pages (page 1 then page 2) to complete the inventory', async () => {
+    requests = stubJurisdictionsEndpoint(statePool);
+    svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    await svc.listJurisdictions({ classification: 'state', page: 1, per_page: 52 }, ctx);
+    expect(requests).toHaveLength(2);
+    expect(requests.map((q) => q.get('page'))).toEqual(['1', '2']);
+  });
+
+  it('honors explicit deep paging without merging (regression guard)', async () => {
+    requests = stubJurisdictionsEndpoint(statePool);
+    svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    const res = await svc.listJurisdictions(
+      { classification: 'state', page: 2, per_page: 52 },
+      ctx,
+    );
+    expect(res.pagination.page).toBe(2);
+    expect(res.results).toHaveLength(4);
+    expect(requests).toHaveLength(1);
+  });
+
+  it('does not merge a collection too large to complete within the page bound (regression guard)', async () => {
+    // 200 municipalities → max_page 4 at per_page 52, beyond MAX_JURISDICTION_MERGE_PAGES, so one
+    // honest page is returned rather than draining the collection.
+    const bigPool = Array.from({ length: 200 }, (_, i) =>
+      makeJurisdiction(`City ${String(i).padStart(3, '0')}`),
+    );
+    requests = stubJurisdictionsEndpoint(bigPool);
+    svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    const res = await svc.listJurisdictions(
+      { classification: 'municipality', page: 1, per_page: 52 },
+      ctx,
+    );
+    expect(res.results).toHaveLength(52);
+    expect(res.pagination.max_page).toBe(4);
+    expect(res.pagination.total_items).toBe(200);
+    expect(requests).toHaveLength(1);
+  });
+});

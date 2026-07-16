@@ -11,14 +11,14 @@ const JurisdictionIncludeEnum = z.enum(['organizations', 'legislative_sessions',
 export const listJurisdictions = tool('openstates_list_jurisdictions', {
   title: 'List Jurisdictions',
   description:
-    'List all jurisdictions covered by Open States — all 50 states, DC, and Puerto Rico. Returns coverage metadata: latest bill update time, latest people update time, and optionally all legislative sessions with their identifiers. Use this when you need to discover valid session identifiers for a state before calling openstates_search_bills with a session filter. The legislative_sessions include option returns all historical and current sessions — always check valid session identifiers here before using them in bill searches, since formats vary widely by state (e.g., "2025", "2025-2026", "2025rs", "2025s1").',
+    'List all jurisdictions covered by Open States — all 50 states, DC, and 5 US territories (American Samoa, Guam, Northern Mariana Islands, Puerto Rico, and the US Virgin Islands): 56 in total, returned complete in a single default call. Returns coverage metadata: latest bill update time, latest people update time, and optionally all legislative sessions with their identifiers. Use this when you need to discover valid session identifiers for a state before calling openstates_search_bills with a session filter. The legislative_sessions include option returns all historical and current sessions — always check valid session identifiers here before using them in bill searches, since formats vary widely by state (e.g., "2025", "2025-2026", "2025rs", "2025s1").',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
     classification: z
       .enum(['state', 'municipality', 'country'])
       .default('state')
       .describe(
-        'Filter by jurisdiction type. Use "state" (default) for all 50 states, DC, and Puerto Rico.',
+        'Filter by jurisdiction type. Use "state" (default) for all 50 states, DC, and the 5 US territories.',
       ),
     include: z
       .array(JurisdictionIncludeEnum)
@@ -34,7 +34,7 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
       .max(52)
       .default(52)
       .describe(
-        'Results per page. Default 52 to cover all states, DC, and Puerto Rico in one request.',
+        'Results per page (upstream maximum 52). The default call returns the complete state inventory (56) in one response by fetching and merging the pages server-side; set a smaller value only to page manually.',
       ),
   }),
   output: z.object({

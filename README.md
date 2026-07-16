@@ -1,6 +1,6 @@
 <div align="center">
   <h1>@cyanheads/openstates-mcp-server</h1>
-  <p><b>Search bills, legislators, committees, and events across all 50 US states, DC, and Puerto Rico via MCP. STDIO or Streamable HTTP.</b>
+  <p><b>Search bills, legislators, committees, and events across all 50 US states, DC, and 5 US territories via MCP. STDIO or Streamable HTTP.</b>
   <div>10 Tools • 1 Resource • 2 Prompts</div>
   </p>
 </div>
@@ -37,7 +37,7 @@
 | `openstates_get_committee` | Fetch committee detail by OCD organization ID, with optional membership roster |
 | `openstates_search_events` | Search hearings, floor sessions, and committee meetings (experimental) |
 | `openstates_get_event` | Fetch full event detail including agenda, participants, and media links |
-| `openstates_list_jurisdictions` | List all 52 jurisdictions covered by Open States with session identifiers and coverage metadata |
+| `openstates_list_jurisdictions` | List all 56 jurisdictions (50 states, DC, and 5 US territories) covered by Open States with session identifiers and coverage metadata |
 | `openstates_get_jurisdiction` | Fetch full metadata for a specific jurisdiction including all legislative sessions and their identifiers |
 
 ### `openstates_search_bills`
@@ -94,7 +94,7 @@ Find all state legislators representing a geographic coordinate.
 
 Discover and look up jurisdiction coverage metadata.
 
-- `openstates_list_jurisdictions` returns all 52 jurisdictions (50 states + DC + Puerto Rico) in a single call with `per_page=52` (the default)
+- `openstates_list_jurisdictions` returns all 56 jurisdictions (50 states, DC, and 5 US territories) in a single default call — the pages are merged server-side, since the upstream `per_page` ceiling of 52 no longer covers the full set
 - `include=legislative_sessions` returns all historical and current session identifiers — required before filtering bill searches by session, since formats vary widely by state (e.g., `2025`, `2025-2026`, `2025rs`, `2025s1`)
 - `openstates_get_jurisdiction` fetches one jurisdiction by OCD-ID, state name, or two-letter abbreviation
 

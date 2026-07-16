@@ -71,6 +71,19 @@ describe('searchCommittees', () => {
     );
   });
 
+  it('forwards a full state name plus chamber to the service (normalization is service-side)', async () => {
+    // The tool passes jurisdiction through verbatim; the service normalizes the name to an
+    // abbreviation before the request. This guards the tool→service boundary for the shape that
+    // previously produced an upstream 500.
+    const ctx = createMockContext();
+    const input = searchCommittees.input.parse({ jurisdiction: 'Texas', chamber: 'upper' });
+    await searchCommittees.handler(input, ctx);
+    expect(mockService.searchCommittees).toHaveBeenCalledWith(
+      expect.objectContaining({ jurisdiction: 'Texas', chamber: 'upper' }),
+      expect.anything(),
+    );
+  });
+
   it('always sets coverageNote enrichment regardless of result count', async () => {
     mockService.searchCommittees.mockResolvedValue({
       results: [],
