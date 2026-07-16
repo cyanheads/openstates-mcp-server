@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.11](changelog/0.1.x/0.1.11.md) — 2026-07-16
+
+Search tools correct session, jurisdiction, and name-length error handling; org_classification=legislature now resolves via a chamber union; adds a created_since bill filter. Adopts mcp-ts-core ^0.10.14 with a new supply-chain guard.
+
 ## [0.1.10](changelog/0.1.x/0.1.10.md) — 2026-06-21
 
 Search tools echo their applied filters in the enrichment block, and date filters validate ISO 8601 format before the API call.
