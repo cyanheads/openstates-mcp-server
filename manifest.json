@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "openstates-mcp-server",
   "version": "0.1.12",
-  "description": "Search bills, legislators, committees, and events across all 50 US states, DC, and Puerto Rico via MCP. STDIO or Streamable HTTP.",
+  "description": "Search bills, legislators, committees, and events across all 50 US states, DC, and 5 US territories via MCP. STDIO or Streamable HTTP.",
   "author": { "name": "cyanheads" },
   "repository": {
     "type": "git",

@@ -42,7 +42,7 @@ await createApp({
   resources: [jurisdictionResource],
   prompts: [billResearch, legislatorProfile],
   instructions:
-    'Open States MCP server — US state legislative data for all 50 states, DC, and Puerto Rico.\n' +
+    'Open States MCP server — US state legislative data for all 50 states, DC, and 5 US territories.\n' +
     '- Use openstates_list_jurisdictions or openstates_get_jurisdiction (include=legislative_sessions) to discover valid session identifiers before filtering bill searches.\n' +
     '- Either jurisdiction or q is required for openstates_search_bills.\n' +
     '- Committee and event tools are experimental — not all states have coverage.\n' +
