@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.12](changelog/0.1.x/0.1.12.md) — 2026-07-16
+
+Committee search normalizes jurisdiction names to avoid an upstream 500; jurisdiction listing merges pages internally for the complete 56-jurisdiction inventory; the jurisdiction resource adopts a typed not-found contract.
+
 ## [0.1.11](changelog/0.1.x/0.1.11.md) — 2026-07-16
 
 Search tools correct session, jurisdiction, and name-length error handling; org_classification=legislature now resolves via a chamber union; adds a created_since bill filter. Adopts mcp-ts-core ^0.10.14 with a new supply-chain guard.

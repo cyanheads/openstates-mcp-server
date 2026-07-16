@@ -37,7 +37,7 @@ Annotations on every tool: `readOnlyHint: true`, `idempotentHint: true`, `openWo
 
 ## Overview
 
-An MCP server wrapping the [Open States API v3](https://v3.openstates.org/) — a comprehensive source for US state legislative data maintained by Open States (formerly Sunlight Labs). Covers all 50 states, DC, and Puerto Rico: bills, legislators, committees, events, and jurisdictions.
+An MCP server wrapping the [Open States API v3](https://v3.openstates.org/) — a comprehensive source for US state legislative data maintained by Open States (formerly Sunlight Labs). Covers all 50 states, DC, and 5 US territories (American Samoa, Guam, Northern Mariana Islands, Puerto Rico, and the US Virgin Islands): bills, legislators, committees, events, and jurisdictions.
 
 **Target users:** Agents performing state-level policy research, civic technology, constituent-to-legislator matching, legislative tracking, journalism, and advocacy.
 
@@ -524,7 +524,7 @@ errors: [
 
 ### 9. `openstates_list_jurisdictions`
 
-**Description:** List all jurisdictions covered by Open States — all 50 states, DC, and Puerto Rico. Returns coverage metadata: latest bill update time, latest people update time, and optionally all legislative sessions with their identifiers. Use this when you need to discover valid session identifiers for a state before calling `openstates_search_bills` with a `session` filter.
+**Description:** List all jurisdictions covered by Open States — all 50 states, DC, and 5 US territories (American Samoa, Guam, Northern Mariana Islands, Puerto Rico, and the US Virgin Islands): 56 in total, returned complete in one default call. Returns coverage metadata: latest bill update time, latest people update time, and optionally all legislative sessions with their identifiers. Use this when you need to discover valid session identifiers for a state before calling `openstates_search_bills` with a `session` filter.
 
 **Input schema:**
 | Param | Type | Description |
@@ -532,7 +532,9 @@ errors: [
 | `classification` | `z.enum(['state', 'municipality', 'country'])` default `state` | Filter to states only (default), municipalities, or all. Most users want `state`. |
 | `include` | `array(z.enum(['organizations', 'legislative_sessions', 'latest_runs']))` optional | `legislative_sessions` includes all session identifiers and date ranges — use this to discover valid `session` values for bill searches. |
 | `page` | `number` default 1 | |
-| `per_page` | `number` default 52 | Defaults to cover all states + DC + PR in one request. |
+| `per_page` | `number` default 52 (upstream max) | Upstream page size. The default call returns the complete 56-jurisdiction inventory in one response — the service fetches and merges the pages when the set exceeds one page, since the upstream `per_page` ceiling of 52 no longer covers all 56. |
+
+**Complete-inventory merge:** The `classification=state` collection (56) has outgrown the upstream `per_page` ceiling of 52 (`per_page=60` → HTTP 400 `invalid per_page, must be in [1, 52]`), so a single page can no longer return the full set. For the default full-inventory request (page 1) whose complete set spans a bounded number of pages, `listJurisdictions` fetches the remaining page(s) and merges them into one synthesized response — the same reassembly the `legislature` chamber union uses. Explicit deep paging (`page > 1`) and collections too large to complete within the bound (municipalities) fall through to plain single-page pagination.
 
 **Output:**
 ```ts
@@ -602,6 +604,8 @@ Exposes jurisdiction metadata as injectable context. Stable URI per jurisdiction
 
 Tool coverage: `openstates_get_jurisdiction` covers the same data for tool-only clients.
 
+**Not-found handling matches the tool path.** The resource declares the same `errors: [{ reason: 'not_found', … }]` contract as `openstates_get_jurisdiction` and catches the service-layer `NotFound` (the upstream 404 surfaces as a rejected `McpError`, never a falsy resolution), rethrowing a resource-local typed `not_found` — invalid ID in the message plus recovery pointing at `openstates_list_jurisdictions` — instead of leaking the raw upstream 404.
+
 ---
 
 ## Services
@@ -647,6 +651,8 @@ getJurisdiction(jurisdictionId: string, include?: string[]): Promise<Jurisdictio
 - Backoff: 1–2s base (rate-limited upstream, undocumented limits)
 - Non-OK responses trigger `ServiceUnavailable`; HTML error responses detected and thrown as transient
 - **429 handling:** Rate limits are enforced but undocumented. Detect HTTP 429 explicitly and throw `ServiceUnavailable` with a retryable flag and a message indicating rate limiting. Do NOT treat 429 the same as 403 (auth failure — not retryable).
+- **Committee jurisdiction normalization:** `searchCommittees` resolves a full jurisdiction *name* to its abbreviation before calling `/committees` — upstream returns HTTP 500 when a state name is combined with a `chamber` filter, while the abbreviation and OCD-ID forms resolve correctly. A static name→abbreviation map (50 states + DC + 5 territories) keeps this deterministic and adds no request; abbreviations, OCD-IDs, and unrecognized values pass through untouched. Applied only to `searchCommittees` — `/bills`, `/people`, and `/events` return 200 on the same shape and need no normalization.
+- **Jurisdiction inventory merge:** `listJurisdictions` completes the advertised one-call inventory internally (see the `openstates_list_jurisdictions` complete-inventory merge above) — the 56-jurisdiction `state` set exceeds the upstream `per_page` ceiling of 52, so the default page-1 request fetches and merges the bounded set of pages into one synthesized response.
 
 ---
 
@@ -850,3 +856,6 @@ GET /bills?jurisdiction=wa&include=sponsorships&include=actions
 | 8 | No SDK dependency | No official JS/TS SDK exists for Open States v3. The API is straightforward REST — native fetch with typed wrappers is sufficient and avoids adding an unmaintained dependency. | 2026-05-23 |
 | 9 | `jurisdiction` resource at `openstates://jurisdiction/{id}` | Stable, injectable context for jurisdiction metadata. Session identifiers and coverage dates are useful pre-conversation context that clients can inject without a tool call. Same pattern as `congressgov`'s `congress://current`. | 2026-05-23 |
 | 10 | Naming aligned with congressgov-mcp-server conventions | `openstates_` prefix, `{server}_{verb}_{noun}` pattern, same annotation set. The two servers are domain peers — consistent naming reduces cognitive load when both are active. | 2026-05-23 |
+| 11 | Committee search normalizes a jurisdiction name to its abbreviation before the request | Upstream `/committees` returns HTTP 500 when a full state name is combined with a `chamber` filter; abbreviation and OCD-ID forms resolve. A static name→abbreviation map sidesteps the fault deterministically with no extra request. Scoped to `searchCommittees` — bills/people/events return 200 on the same shape. | 2026-07-16 |
+| 12 | `listJurisdictions` merges pages internally to keep the one-call inventory promise | The `state` set (56) outgrew the upstream `per_page` ceiling of 52, so one page can no longer return the full inventory. The default page-1 request fetches and merges the bounded set of pages, mirroring the `legislature` union reassembly; large collections fall through to plain pagination. | 2026-07-16 |
+| 13 | Jurisdiction resource declares the same typed `not_found` contract as the tool | The service always throws on a non-OK response, so the resource's `if (!jurisdiction)` guard was dead code — a real 404 bypassed it and leaked upstream. Catching the service `NotFound` and rethrowing via `ctx.fail` aligns the resource's error surface with `openstates_get_jurisdiction`. | 2026-07-16 |
