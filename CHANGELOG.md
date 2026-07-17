@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.14](changelog/0.1.x/0.1.14.md) — 2026-07-16
+
+Response caching and a fail-fast daily request-budget guard protect the shared free-tier Open States key; 429 and HTML rate-limit responses now fail fast instead of retrying; the search_committees description and README correct a stale coverage_note reference to the coverageNote field.
+
 ## [0.1.13](changelog/0.1.x/0.1.13.md) — 2026-07-16
 
 Every include-capable tool surfaces enrichment fields previously dropped (other_titles, sources, organizations, votes, and more); event participant role is now optional to match upstream sparsity; coverage copy corrected to 5 US territories across all metadata surfaces.
