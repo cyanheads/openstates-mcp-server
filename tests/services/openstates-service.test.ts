@@ -4,6 +4,8 @@
  * @module tests/services/openstates-service.test
  */
 
+import type { Context } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // public searchPeople / searchCommittees codepaths, which call the private
 // helpers internally. Import the class directly so we can construct a
 // lightweight instance without touching env vars.
-import { OpenStatesApiService } from '@/services/openstates/openstates-service.js';
+import { cacheKeyForUrl, OpenStatesApiService } from '@/services/openstates/openstates-service.js';
 import type { PersonListResponse, RawPerson } from '@/services/openstates/types.js';
 
 // Minimal stubs so the constructor doesn't blow up.
@@ -262,11 +264,14 @@ function stubPeopleEndpoint(): URLSearchParams[] {
 describe('searchPeople — org_classification=legislature union', () => {
   let svc: OpenStatesApiService;
   let requests: URLSearchParams[];
-  const ctx = createMockContext();
+  // Fresh context (and its in-memory ctx.state cache) per test — sharing one across the block would
+  // let fetchJson's response cache leak between tests and undercount the upstream-request assertions.
+  let ctx: Context;
 
   beforeEach(() => {
     requests = stubPeopleEndpoint();
     svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    ctx = createMockContext({ tenantId: 'test-tenant' });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -420,11 +425,12 @@ describe('searchPeople — org_classification=legislature union', () => {
 describe('searchPeople — other classifications are untouched', () => {
   let svc: OpenStatesApiService;
   let requests: URLSearchParams[];
-  const ctx = createMockContext();
+  let ctx: Context;
 
   beforeEach(() => {
     requests = stubPeopleEndpoint();
     svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    ctx = createMockContext({ tenantId: 'test-tenant' });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -482,8 +488,11 @@ const EXPECTED_SOURCES = [{ url: 'https://leg.wa.gov/senators/smith', note: 'off
 
 describe('normalizePerson — include enrichment survives normalization', () => {
   let svc: OpenStatesApiService;
-  const ctx = createMockContext();
+  let ctx: Context;
 
+  beforeEach(() => {
+    ctx = createMockContext({ tenantId: 'test-tenant' });
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -585,11 +594,12 @@ function stubCommitteesEndpoint(): URLSearchParams[] {
 describe('searchCommittees — jurisdiction normalization', () => {
   let svc: OpenStatesApiService;
   let requests: URLSearchParams[];
-  const ctx = createMockContext();
+  let ctx: Context;
 
   beforeEach(() => {
     requests = stubCommitteesEndpoint();
     svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    ctx = createMockContext({ tenantId: 'test-tenant' });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -751,9 +761,12 @@ function stubJurisdictionsEndpoint(pool: ReturnType<typeof makeJurisdiction>[]):
 describe('listJurisdictions — complete-inventory two-page merge', () => {
   let svc: OpenStatesApiService;
   let requests: URLSearchParams[];
-  const ctx = createMockContext();
+  let ctx: Context;
   const statePool = STATE_JURISDICTION_NAMES.map(makeJurisdiction);
 
+  beforeEach(() => {
+    ctx = createMockContext({ tenantId: 'test-tenant' });
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -810,5 +823,112 @@ describe('listJurisdictions — complete-inventory two-page merge', () => {
     expect(res.pagination.max_page).toBe(4);
     expect(res.pagination.total_items).toBe(200);
     expect(requests).toHaveLength(1);
+  });
+});
+
+// --------------------------------------------------------------------------
+// fetchJson — response caching, the fail-fast daily-budget guard, and the
+// non-retryable classification of the two rate-limit signals (429, HTML block
+// page). All exercised through searchBills, which flows straight through the
+// shared fetchJson chokepoint every method reaches.
+// --------------------------------------------------------------------------
+
+describe('fetchJson — caching and rate-limit fail-fast', () => {
+  let ctx: Context;
+
+  beforeEach(() => {
+    ctx = createMockContext({ tenantId: 'test-tenant' });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** An empty, well-formed `/bills` page. A fresh Response per call — bodies are single-use. */
+  const billsPage = () =>
+    jsonResponse(200, {
+      results: [],
+      pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
+    });
+
+  it('derives a storage-key-safe cache key from a URL carrying query punctuation', async () => {
+    // Regression guard: the raw URL (with :?&=) is rejected by the real StorageService key
+    // validator (VALID_KEY_PATTERN = /^[a-zA-Z0-9_.\-/]+$/, no "..", ≤1024 chars), so fetchJson
+    // must hash it. The mock context skips key validation, so without this direct check only a
+    // live run against real storage would catch a regression here.
+    const key = await cacheKeyForUrl(
+      'https://v3.openstates.org/bills?jurisdiction=wa&q=climate&page=1&per_page=1',
+    );
+    expect(key).toMatch(/^[a-zA-Z0-9_.\-/]+$/);
+    expect(key.includes('..')).toBe(false);
+    expect(key.length).toBeLessThanOrEqual(1024);
+  });
+
+  it('serves a repeated identical request from cache without a second upstream fetch', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(billsPage()));
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+
+    const first = await svc.searchBills({ q: 'budget', page: 1, per_page: 10 }, ctx);
+    const second = await svc.searchBills({ q: 'budget', page: 1, per_page: 10 }, ctx);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // second call served from the ctx.state cache
+    expect(second).toEqual(first);
+  });
+
+  it('still hits upstream for a request whose params differ (URL is the cache key)', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(billsPage()));
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+
+    await svc.searchBills({ q: 'a', page: 1, per_page: 10 }, ctx);
+    await svc.searchBills({ q: 'b', page: 1, per_page: 10 }, ctx);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2); // distinct URL → not a cache hit
+  });
+
+  it('fails fast on HTTP 429 without a retry storm (the shared-key cap is non-transient)', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(429, { detail: 'rate limited' })));
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+
+    await expect(svc.searchBills({ q: 'x', page: 1, per_page: 10 }, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.RateLimited,
+    });
+    // RateLimited is a transient code; absent retryable:false, withRetry would retry it 4×.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails fast on a 200 HTML block page without retrying', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response('<!DOCTYPE html><html><body>Access denied</body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+
+    await expect(svc.searchBills({ q: 'x', page: 1, per_page: 10 }, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+    });
+    // ServiceUnavailable is transient too; absent retryable:false the block page would be retried 4×.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('trips the fail-fast budget guard once the daily budget is spent, before any upstream call', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(billsPage()));
+    vi.stubGlobal('fetch', fetchMock);
+    // Budget of 2 → the 3rd distinct (cache-missing) request trips the guard.
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig, 2);
+
+    await svc.searchBills({ q: 'a', page: 1, per_page: 10 }, ctx);
+    await svc.searchBills({ q: 'b', page: 1, per_page: 10 }, ctx);
+    await expect(svc.searchBills({ q: 'c', page: 1, per_page: 10 }, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.RateLimited,
+      data: { retryable: false }, // re-stamped so withRetry can't retry the guard's own rejection
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2); // 3rd request rejected before fetch — zero upstream cost
   });
 });

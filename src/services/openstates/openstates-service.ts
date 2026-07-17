@@ -5,8 +5,19 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
+import {
+  JsonRpcErrorCode,
+  McpError,
+  rateLimited,
+  serviceUnavailable,
+} from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
-import { httpErrorFromResponse, withRetry } from '@cyanheads/mcp-ts-core/utils';
+import {
+  httpErrorFromResponse,
+  logger,
+  RateLimiter,
+  withRetry,
+} from '@cyanheads/mcp-ts-core/utils';
 import type { ServerConfig } from '@/config/server-config.js';
 import type {
   Bill,
@@ -161,13 +172,69 @@ function normalizeCommitteeJurisdiction(value: string): string {
   return JURISDICTION_NAME_TO_ABBR[value.trim().toLowerCase()] ?? value;
 }
 
+/**
+ * Fail-fast daily request budget for the shared Open States API key. The v3 free tier caps at
+ * ~10 req/min and 250 req/day; on the hosted deployment every caller shares one key, so the daily
+ * cap is the binding constraint. The guard rejects before `fetch()` once the budget is spent —
+ * costing zero upstream requests — rather than waiting on a slow-refilling daily window.
+ * Overridable per instance (tests, a paid tier); defaults to the documented free-tier cap.
+ */
+const FREE_TIER_DAILY_BUDGET = 250;
+
+/** Rolling window the daily budget is measured over. */
+const BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** One shared-key budget bucket — the hosted deployment rations a single upstream key across all callers. */
+const RATE_LIMIT_KEY = 'openstates:shared-key';
+
+/**
+ * `ctx.state` cache-key namespace for `fetchJson` responses. The storage key validator only accepts
+ * `[A-Za-z0-9_.\-/]` (no colons, no query punctuation), so the namespace uses underscores and the URL
+ * itself is hashed rather than embedded — see `cacheKeyForUrl`.
+ */
+const CACHE_KEY_PREFIX = 'openstates_cache_';
+
+/** Search endpoints (bills/people/committees/events) track active legislative movement — short TTL. */
+const TTL_SEARCH_SECONDS = 10 * 60;
+/** Jurisdiction inventory + metadata refresh on the daily scraper cadence — long TTL. */
+const TTL_JURISDICTION_SECONDS = 12 * 60 * 60;
+/** Geo district lookup changes only on redistricting — longest TTL. */
+const TTL_GEO_SECONDS = 24 * 60 * 60;
+
+/** Cache TTL (seconds) for a request URL, chosen by endpoint path. */
+function cacheTtlForUrl(url: string): number {
+  const { pathname } = new URL(url);
+  if (pathname.startsWith('/people.geo')) return TTL_GEO_SECONDS;
+  if (pathname.startsWith('/jurisdictions')) return TTL_JURISDICTION_SECONDS;
+  return TTL_SEARCH_SECONDS;
+}
+
+/**
+ * Derive a storage-safe cache key from a request URL. The raw URL carries `:?&=`, which the storage
+ * key validator (`[A-Za-z0-9_.\-/]` only) rejects, so hash it to a hex digest under a valid prefix.
+ * Web Crypto is a global in every supported runtime, keeping the hash cross-platform.
+ */
+export async function cacheKeyForUrl(url: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url));
+  const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${CACHE_KEY_PREFIX}${hex}`;
+}
+
 export class OpenStatesApiService {
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly rateLimiter: RateLimiter;
 
-  constructor(_appConfig: AppConfig, _storage: StorageService, serverConfig: ServerConfig) {
+  constructor(
+    appConfig: AppConfig,
+    _storage: StorageService,
+    serverConfig: ServerConfig,
+    dailyRequestBudget: number = FREE_TIER_DAILY_BUDGET,
+  ) {
     this.baseUrl = serverConfig.apiBaseUrl.replace(/\/$/, '');
     this.apiKey = serverConfig.apiKey;
+    this.rateLimiter = new RateLimiter(appConfig, logger);
+    this.rateLimiter.configure({ maxRequests: dailyRequestBudget, windowMs: BUDGET_WINDOW_MS });
   }
 
   // --- Internal HTTP plumbing ---
@@ -187,9 +254,21 @@ export class OpenStatesApiService {
     return url.toString();
   }
 
-  private fetchJson<T>(url: string, ctx: Context): Promise<T> {
-    return withRetry(
+  private async fetchJson<T>(url: string, ctx: Context): Promise<T> {
+    const cacheKey = await cacheKeyForUrl(url);
+    const cached = await ctx.state.get<T>(cacheKey);
+    if (cached !== null) {
+      ctx.log.debug('Cache hit', { path: new URL(url).pathname });
+      return cached;
+    }
+
+    const result = await withRetry(
       async () => {
+        // Fail-fast daily-budget guard, inside the retry boundary so every real upstream attempt
+        // counts and a rejection costs zero requests (it throws before fetch). Reached only on a
+        // cache miss, so cache hits never consume the budget.
+        this.checkRateBudget();
+
         const response = await fetch(url, {
           headers: {
             'X-API-KEY': this.apiKey,
@@ -199,19 +278,22 @@ export class OpenStatesApiService {
         });
 
         if (!response.ok) {
+          // A 429 is the shared key's rate cap — deterministic, not a transient blip — so mark it
+          // non-retryable and let withRetry fail fast instead of burning the rest of the budget on
+          // a capped endpoint. Every other status keeps its default classification (5xx transient).
           throw await httpErrorFromResponse(response, {
             service: 'OpenStates',
-            data: { url },
+            data: { url, ...(response.status === 429 ? { retryable: false } : {}) },
           });
         }
 
         const text = await response.text();
-        // HTML error page detection
+        // HTML from a JSON API is a block / rate-limit page, not a recoverable transient — fail
+        // fast so withRetry doesn't retry the block page four times.
         if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
-          const { serviceUnavailable } = await import('@cyanheads/mcp-ts-core/errors');
           throw serviceUnavailable(
             'Open States API returned HTML instead of JSON — likely rate-limited or unavailable.',
-            { url },
+            { url, retryable: false },
           );
         }
 
@@ -223,6 +305,27 @@ export class OpenStatesApiService {
         signal: ctx.signal,
       },
     );
+
+    // Only a successful 2xx JSON response reaches here — every error path threw above, so nothing
+    // but a good response is ever cached.
+    await ctx.state.set(cacheKey, result, { ttl: cacheTtlForUrl(url) });
+    return result;
+  }
+
+  /**
+   * Fail-fast budget guard over the shared-key `RateLimiter`. Re-stamps the limiter's `RateLimited`
+   * rejection with `retryable: false`: `withRetry` classifies `RateLimited` as transient by
+   * default, so without the flag it would retry the guard's own rejection four times and defeat it.
+   */
+  private checkRateBudget(): void {
+    try {
+      this.rateLimiter.check(RATE_LIMIT_KEY);
+    } catch (err) {
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.RateLimited) {
+        throw rateLimited(err.message, { ...err.data, retryable: false }, { cause: err });
+      }
+      throw err;
+    }
   }
 
   // --- Bills ---
@@ -268,8 +371,7 @@ export class OpenStatesApiService {
   }
 
   getBillById(openstatesId: string, include: string[] | undefined, ctx: Context): Promise<Bill> {
-    // OCD bill IDs are like "ocd-bill/..." — strip the prefix for URL routing
-    // The API accepts the full OCD ID in the path
+    // The API accepts the full OCD bill ID (e.g. "ocd-bill/...") in the path, unmodified.
     const url = this.buildUrl(`/bills/${openstatesId}`, { include });
     ctx.log.debug('Fetching bill by OCD ID', { openstatesId });
     return this.fetchJson<Bill>(url, ctx);
