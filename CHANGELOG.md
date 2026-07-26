@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.15](changelog/0.1.x/0.1.15.md) — 2026-07-26
+
+A caller-owned deadline stops upstream timeouts from retrying into a ~4x wait; the daily budget and per-attempt timeout are now configurable; search_people/search_committees require jurisdiction to avoid the same timeout; several tools surface sponsor links, URLs, timestamps, headshots, and OCD division IDs the output schemas previously dropped.
+
 ## [0.1.14](changelog/0.1.x/0.1.14.md) — 2026-07-16
 
 Response caching and a fail-fast daily request-budget guard protect the shared free-tier Open States key; 429 and HTML rate-limit responses now fail fast instead of retrying; the search_committees description and README correct a stale coverage_note reference to the coverageNote field.

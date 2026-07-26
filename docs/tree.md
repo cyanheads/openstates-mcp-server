@@ -1,6 +1,6 @@
 # openstates-mcp-server - Directory Structure
 
-Generated on: 2026-07-16 09:13:18
+Generated on: 2026-07-26 10:47:21
 
 ```text
 openstates-mcp-server/
@@ -157,6 +157,8 @@ openstates-mcp-server/
 │   │       └── types.ts
 │   └── index.ts
 ├── tests/
+│   ├── config/
+│   │   └── server-config.test.ts
 │   ├── prompts/
 │   │   ├── bill-research.prompt.test.ts
 │   │   └── legislator-profile.prompt.test.ts
