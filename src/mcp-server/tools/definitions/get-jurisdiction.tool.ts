@@ -102,6 +102,13 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
       recovery:
         'Use openstates_list_jurisdictions to discover valid jurisdiction IDs. States use the pattern: ocd-jurisdiction/country:us/state:{2-letter-abbr}/government.',
     },
+    {
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout.',
+      recovery:
+        'Retry the lookup once; if it repeats, request fewer include values — legislative_sessions and latest_runs each enlarge the upstream response.',
+    },
   ],
 
   async handler(input, ctx) {

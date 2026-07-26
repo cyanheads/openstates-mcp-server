@@ -116,6 +116,8 @@ export interface Bill {
   sponsorships?: BillSponsorship[];
   subject: string[];
   title: string;
+  /** Last time Open States touched the record — the field the default `sort=updated_desc` orders by. */
+  updated_at?: string;
   versions?: BillDocument[];
   votes?: VoteEvent[];
 }
@@ -139,6 +141,12 @@ export type Chamber = Extract<OrgClassification, 'lower' | 'upper'>;
 
 export interface PersonRole {
   district: string | null;
+  /**
+   * OCD division the district maps to (e.g. `ocd-division/country:us/state:wa/sldu:37`). Optional
+   * and nullable: an undistricted role carries `null`, and the upstream omits the key on some
+   * records, so neither form may be treated as a guaranteed value.
+   */
+  division_id?: string | null;
   org_classification: string;
   title: string;
 }
@@ -162,6 +170,8 @@ export interface RawPerson {
   family_name?: string;
   given_name?: string;
   id: string;
+  /** Official headshot URL. Absent for members with no published photo. */
+  image?: string;
   jurisdiction?: CompactJurisdiction;
   links?: PersonLink[];
   name: string;
@@ -179,6 +189,8 @@ export interface Person {
   family_name: string;
   given_name: string;
   id: string;
+  /** Official headshot URL. Omitted when upstream carries no photo for the member. */
+  image?: string;
   jurisdiction: CompactJurisdiction;
   links?: PersonLink[];
   name: string;

@@ -177,6 +177,79 @@ describe('searchBills', () => {
     expect(text).toContain('0 bills');
   });
 
+  /**
+   * The upstream `/bills` response already carries these; the output schema decides whether any
+   * client sees them. Zod strips undeclared keys, so an omission here is invisible in
+   * `structuredContent` and — via the sentinel-checked format-parity rule — in `content[]` too.
+   */
+  describe('fields the output schema previously stripped (issue #27)', () => {
+    const enrichedBill = {
+      ...mockBill,
+      updated_at: '2026-07-15T12:02:32Z',
+      openstates_url: 'https://openstates.org/wa/bills/2025-2026/HB1000/',
+      sponsorships: [
+        {
+          id: 'sp-1',
+          name: 'Parshley',
+          entity_type: 'person',
+          primary: true,
+          classification: 'primary',
+          person: { id: 'ocd-person/parshley', name: 'Adison Richards Parshley' },
+        },
+      ],
+    };
+
+    it('keeps openstates_url, updated_at, and the sponsor person link in structuredContent', async () => {
+      mockService.searchBills.mockResolvedValue({
+        results: [enrichedBill],
+        pagination: mockBillListResult.pagination,
+      });
+      const ctx = createMockContext();
+      const input = searchBills.input.parse({ jurisdiction: 'wa', include: ['sponsorships'] });
+
+      // Parse through the output schema — the framework builds structuredContent from it, and
+      // anything undeclared is dropped there rather than at the handler boundary.
+      const structured = searchBills.output.parse(await searchBills.handler(input, ctx));
+      const bill = structured.results[0];
+
+      expect(bill?.openstates_url).toBe('https://openstates.org/wa/bills/2025-2026/HB1000/');
+      expect(bill?.updated_at).toBe('2026-07-15T12:02:32Z');
+      expect(bill?.sponsorships?.[0]?.person).toEqual({
+        id: 'ocd-person/parshley',
+        name: 'Adison Richards Parshley',
+      });
+    });
+
+    it('renders all three in format() so content[]-only clients see them too', () => {
+      const blocks = searchBills.format!({
+        results: [enrichedBill],
+        pagination: mockBillListResult.pagination,
+      });
+      const text = (blocks[0] as { text: string }).text;
+      expect(text).toContain('https://openstates.org/wa/bills/2025-2026/HB1000/');
+      expect(text).toContain('2026-07-15T12:02:32Z');
+      expect(text).toContain('ocd-person/parshley');
+    });
+
+    it('omits all three when upstream provides none (sparse payload)', () => {
+      const sparseSponsorship = { ...enrichedBill.sponsorships[0], person: undefined };
+      const structured = searchBills.output.parse({
+        results: [{ ...mockBill, sponsorships: [sparseSponsorship] }],
+        pagination: mockBillListResult.pagination,
+      });
+      const bill = structured.results[0];
+      expect(bill?.openstates_url).toBeUndefined();
+      expect(bill?.updated_at).toBeUndefined();
+      expect(bill?.sponsorships?.[0]?.person).toBeUndefined();
+
+      const text = (searchBills.format!(structured)[0] as { text: string }).text;
+      expect(text).toContain('HB 1000');
+      expect(text).not.toContain('**URL:**');
+      expect(text).not.toContain('**Updated:**');
+      expect(text).not.toContain('[person:');
+    });
+  });
+
   it('formats sponsorships inline when present', () => {
     const result = {
       results: [

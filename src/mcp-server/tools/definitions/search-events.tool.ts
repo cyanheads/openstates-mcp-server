@@ -234,6 +234,13 @@ export const searchEvents = tool('openstates_search_events', {
       recovery:
         'Provide a jurisdiction (state name, abbreviation, or OCD-ID); the events endpoint has no all-states search.',
     },
+    {
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout — the query is too broad.',
+      recovery:
+        'Narrow the search: bound it with after and before, set require_bills=true, and drop any include values you do not need.',
+    },
   ],
 
   async handler(input, ctx) {

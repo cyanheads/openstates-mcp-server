@@ -45,6 +45,13 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
                 title: z.string().describe('Role title.'),
                 org_classification: z.string().describe('Chamber classification.'),
                 district: z.string().nullable().describe('District label or null.'),
+                division_id: z
+                  .string()
+                  .nullable()
+                  .optional()
+                  .describe(
+                    'OCD division the district maps to (e.g., "ocd-division/country:us/state:wa/sldu:37"). Null when undistricted, absent when upstream omits it.',
+                  ),
               })
               .nullable()
               .describe('Current role or null.'),
@@ -56,6 +63,10 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
               .describe('Home jurisdiction.'),
             email: z.string().describe('Email address. Empty string when not available.'),
             openstates_url: z.string().describe('Open States profile URL.'),
+            image: z
+              .string()
+              .optional()
+              .describe('Official headshot URL. Absent when no photo is published.'),
             offices: z
               .array(
                 z
@@ -137,6 +148,13 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
       recovery:
         'Latitude must be between -90 and 90, longitude between -180 and 180. For continental US: lat 24-50, lng -125 to -66. For Alaska: lat 51-72, lng -180 to -130.',
     },
+    {
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout.',
+      recovery:
+        'Retry the lookup once; if it repeats, request fewer include values so the district lookup returns a smaller payload.',
+    },
   ],
 
   async handler(input, ctx) {
@@ -195,9 +213,12 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
         lines.push(
           `**Role:** ${person.current_role.title} (${person.current_role.org_classification})${district}`,
         );
+        if (person.current_role.division_id)
+          lines.push(`**Division:** ${person.current_role.division_id}`);
       }
       if (person.email) lines.push(`**Email:** ${person.email}`);
       if (person.openstates_url) lines.push(`**URL:** ${person.openstates_url}`);
+      if (person.image) lines.push(`**Photo:** ${person.image}`);
       if (person.offices?.length) {
         for (const office of person.offices) {
           const parts: string[] = [`${office.name} [${office.classification}]`];

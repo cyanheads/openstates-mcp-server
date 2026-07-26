@@ -44,6 +44,32 @@ describe('searchCommittees', () => {
     expect(enrichment.coverageNote).toContain('experimental');
   });
 
+  /**
+   * `GET /committees` with no jurisdiction returned `200 {"total_items": 0}` when the previous
+   * description was written; upstream no longer answers it at all — it sits on the gateway for
+   * its full ~60s window and returns 504. Guard before the request so the agent gets a typed
+   * reason and a recovery hint instead of a timeout, and so the stale empty-result promise is
+   * never restated.
+   */
+  it('throws jurisdiction_required when jurisdiction is omitted, without calling the service', async () => {
+    const ctx = createMockContext({ errors: searchCommittees.errors });
+    const input = searchCommittees.input.parse({});
+    await expect(searchCommittees.handler(input, ctx)).rejects.toMatchObject({
+      data: {
+        reason: 'jurisdiction_required',
+        recovery: { hint: expect.stringContaining('openstates_list_jurisdictions') },
+      },
+    });
+    expect(mockService.searchCommittees).not.toHaveBeenCalled();
+  });
+
+  it('still issues the request when only a chamber accompanies the jurisdiction', async () => {
+    const ctx = createMockContext({ errors: searchCommittees.errors });
+    const input = searchCommittees.input.parse({ jurisdiction: 'wa', chamber: 'upper' });
+    await searchCommittees.handler(input, ctx);
+    expect(mockService.searchCommittees).toHaveBeenCalledTimes(1);
+  });
+
   it('includes memberships when requested', async () => {
     const committeeWithMembers = {
       ...mockCommittee,

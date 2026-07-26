@@ -166,6 +166,33 @@ describe('getBill', () => {
     expect(text).toContain('Rep. A');
   });
 
+  /**
+   * `updated_at` is what `openstates_search_bills` orders by under the default
+   * `sort=updated_desc`, so a caller that follows a search hit into the detail view has to be
+   * able to read the value the ordering was computed from.
+   */
+  describe('updated_at (issue #27)', () => {
+    const billWithTimestamp = { ...mockBill, updated_at: '2026-07-15T12:02:32Z' };
+
+    it('keeps updated_at in structuredContent', async () => {
+      mockService.getBillById.mockResolvedValue(billWithTimestamp);
+      const ctx = createMockContext();
+      const input = getBill.input.parse({ openstates_id: 'ocd-bill/12345' });
+      const structured = getBill.output.parse(await getBill.handler(input, ctx));
+      expect(structured.updated_at).toBe('2026-07-15T12:02:32Z');
+    });
+
+    it('renders updated_at in format()', () => {
+      const text = (getBill.format!(billWithTimestamp)[0] as { text: string }).text;
+      expect(text).toContain('2026-07-15T12:02:32Z');
+    });
+
+    it('omits the line entirely when upstream sends no timestamp', () => {
+      const text = (getBill.format!(mockBill)[0] as { text: string }).text;
+      expect(text).not.toContain('**Updated:**');
+    });
+  });
+
   it('handles sparse bill without optional fields', () => {
     const sparseBill = {
       id: 'ocd-bill/sparse',

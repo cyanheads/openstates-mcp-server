@@ -143,6 +143,13 @@ export const getEvent = tool('openstates_get_event', {
       recovery:
         'Use openstates_search_events with a jurisdiction and date range to discover valid event IDs. Note that event data is experimental and coverage varies widely by state.',
     },
+    {
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout.',
+      recovery:
+        'Retry the lookup once; if it repeats, request fewer include values — agenda and participants each enlarge the upstream response.',
+    },
   ],
 
   async handler(input, ctx) {

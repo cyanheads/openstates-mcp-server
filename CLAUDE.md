@@ -2,7 +2,7 @@
 
 **Server:** @cyanheads/openstates-mcp-server
 **Version:** 0.1.14
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.10.14`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.10.17`
 **Engines:** Bun ≥1.3.0, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/sdk` ^1.29.0
 **Zod:** ^4.4.3
@@ -220,7 +220,7 @@ See framework CLAUDE.md and the `api-errors` skill for the full auto-classificat
 src/
   index.ts                              # createApp() entry point
   config/
-    server-config.ts                    # Server-specific env vars (OPENSTATES_API_KEY, OPENSTATES_API_BASE_URL)
+    server-config.ts                    # Server-specific env vars (OPENSTATES_API_KEY, OPENSTATES_API_BASE_URL, OPENSTATES_DAILY_REQUEST_BUDGET, OPENSTATES_REQUEST_TIMEOUT_MS)
   services/
     openstates/
       openstates-service.ts             # Open States API v3 HTTP client (init/accessor pattern)

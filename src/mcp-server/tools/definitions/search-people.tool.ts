@@ -4,6 +4,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const PersonIncludeEnum = z.enum([
@@ -17,17 +18,21 @@ const PersonIncludeEnum = z.enum([
 export const searchPeople = tool('openstates_search_people', {
   title: 'Search People',
   description:
-    'Search state legislators and officials by name, jurisdiction, chamber, district, or party. Supports name substring matching (case-insensitive). org_classification targets a role type: "upper" for Senate, "lower" for House/Assembly, "executive" for governors and executive officials, and "legislature" for every legislator — both chambers merged into one paginated set (all upper members, then all lower), which excludes executive-branch officials. Omitting org_classification is not the same as "legislature": it returns every officeholder, executive officials included. include=offices adds phone, fax, and address. include=links adds website and social links. Omitting jurisdiction searches across all states and may return a large result set.',
+    'Search state legislators and officials by name, jurisdiction, chamber, district, or party. jurisdiction is required — a search spanning all 56 jurisdictions exceeds the upstream timeout, including a name-only one, so scope every call to a single state. Use openstates_list_jurisdictions to pick one, or openstates_get_legislators_by_location when you have coordinates but no state. Supports name substring matching (case-insensitive). org_classification targets a role type: "upper" for Senate, "lower" for House/Assembly, "executive" for governors and executive officials, and "legislature" for every legislator — both chambers merged into one paginated set (all upper members, then all lower), which excludes executive-branch officials. Omitting org_classification is not the same as "legislature": it returns every officeholder, executive officials included. include=offices adds phone, fax, and address. include=links adds website and social links.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
     jurisdiction: z
       .string()
       .optional()
-      .describe('State name, abbreviation, or OCD-ID. Omitting searches across all states.'),
+      .describe(
+        'State name, abbreviation, or OCD-ID. Required — an all-states search exceeds the upstream timeout, so omitting it is rejected before any request is issued.',
+      ),
     name: z
       .string()
       .optional()
-      .describe('Name or partial name to match (case-insensitive substring).'),
+      .describe(
+        'Name or partial name to match (case-insensitive substring). Narrows within the jurisdiction; it does not substitute for one.',
+      ),
     org_classification: z
       .enum(['legislature', 'executive', 'lower', 'upper', 'government'])
       .optional()
@@ -71,6 +76,13 @@ export const searchPeople = tool('openstates_search_people', {
                   .string()
                   .nullable()
                   .describe('District label or null when undistricted.'),
+                division_id: z
+                  .string()
+                  .nullable()
+                  .optional()
+                  .describe(
+                    'OCD division the district maps to (e.g., "ocd-division/country:us/state:wa/sldu:37"). Null when undistricted, absent when upstream omits it.',
+                  ),
               })
               .nullable()
               .describe('Current role or null when no active role is recorded.'),
@@ -84,6 +96,10 @@ export const searchPeople = tool('openstates_search_people', {
             family_name: z.string().describe('Family (last) name.'),
             email: z.string().describe('Email address. Empty string when not available.'),
             openstates_url: z.string().describe('Open States profile URL.'),
+            image: z
+              .string()
+              .optional()
+              .describe('Official headshot URL. Absent when no photo is published.'),
             offices: z
               .array(
                 z
@@ -182,8 +198,32 @@ export const searchPeople = tool('openstates_search_people', {
       render: (v) => `Filters: ${JSON.stringify(v)}`,
     },
   },
+  errors: [
+    {
+      reason: 'jurisdiction_required',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'jurisdiction was omitted — an all-states people search exceeds the upstream timeout.',
+      recovery:
+        'Provide a jurisdiction (state name, abbreviation, or OCD-ID); openstates_list_jurisdictions lists every valid value, and openstates_get_legislators_by_location resolves coordinates to legislators when no state is known.',
+    },
+    {
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout — the query is too broad.',
+      recovery:
+        'Narrow the search: keep the jurisdiction, add org_classification or district, and drop any include values you do not need.',
+    },
+  ],
 
   async handler(input, ctx) {
+    if (!input.jurisdiction) {
+      throw ctx.fail(
+        'jurisdiction_required',
+        'jurisdiction is required for openstates_search_people.',
+        { ...ctx.recoveryFor('jurisdiction_required') },
+      );
+    }
+
     const svc = getOpenStatesApiService();
     const result = await svc.searchPeople(
       {
@@ -251,9 +291,12 @@ export const searchPeople = tool('openstates_search_people', {
         lines.push(
           `**Role:** ${person.current_role.title} (${person.current_role.org_classification})${district}`,
         );
+        if (person.current_role.division_id)
+          lines.push(`**Division:** ${person.current_role.division_id}`);
       }
       if (person.email) lines.push(`**Email:** ${person.email}`);
       if (person.openstates_url) lines.push(`**URL:** ${person.openstates_url}`);
+      if (person.image) lines.push(`**Photo:** ${person.image}`);
       if (person.offices?.length) {
         for (const office of person.offices) {
           const parts: string[] = [`${office.name} [${office.classification}]`];

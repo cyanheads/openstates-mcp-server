@@ -37,7 +37,7 @@ const isoDateMessage =
 export const searchBills = tool('openstates_search_bills', {
   title: 'Search Bills',
   description:
-    'Search state legislative bills across all covered US jurisdictions. Supports full-text search, jurisdiction/session filtering, subject tags, sponsor lookups, and sort order. Either jurisdiction or q (full-text) is required — combining both narrows results. include=sponsorships,actions returns sponsor and action history inline. sort=latest_action_desc surfaces bills currently moving. openstates_get_jurisdiction with include=legislative_sessions returns valid session identifiers for session filtering.',
+    'Search state legislative bills across all covered US jurisdictions. Supports full-text search, jurisdiction/session filtering, subject tags, sponsor lookups, and sort order. Either jurisdiction or q (full-text) is required, and pairing them is the reliable form — a q-only search spans all 56 jurisdictions and exceeds the upstream timeout for a common term, though a distinctive one still returns quickly. include=sponsorships,actions returns sponsor and action history inline. sort=latest_action_desc surfaces bills currently moving. openstates_get_jurisdiction with include=legislative_sessions returns valid session identifiers for session filtering.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
     jurisdiction: z
@@ -50,7 +50,7 @@ export const searchBills = tool('openstates_search_bills', {
       .string()
       .optional()
       .describe(
-        'Full-text search across bill titles, abstracts, and text. Required unless jurisdiction is provided. Combining with jurisdiction is recommended for precision.',
+        'Full-text search across bill titles, abstracts, and text. Required unless jurisdiction is provided. Pair it with jurisdiction whenever a state is known — a q-only search over every jurisdiction times out upstream for a common term.',
       ),
     session: z
       .string()
@@ -149,6 +149,16 @@ export const searchBills = tool('openstates_search_bills', {
               .string()
               .nullable()
               .describe('Date bill passed (when applicable).'),
+            updated_at: z
+              .string()
+              .optional()
+              .describe(
+                'Timestamp Open States last updated this record — the field the default sort=updated_desc orders by.',
+              ),
+            openstates_url: z
+              .string()
+              .optional()
+              .describe('Citable Open States page for this bill.'),
             sponsorships: z
               .array(
                 z
@@ -157,6 +167,19 @@ export const searchBills = tool('openstates_search_bills', {
                     entity_type: z.string().describe('Entity type: "person", "organization".'),
                     primary: z.boolean().describe('Whether this is the primary sponsor.'),
                     classification: z.string().describe('Sponsorship type.'),
+                    person: z
+                      .object({
+                        id: z
+                          .string()
+                          .describe(
+                            "OCD person ID. Pass it back as the sponsor filter to find this legislator's other bills — an exact handle where the sponsor name string is often only a family name.",
+                          ),
+                        name: z.string().describe('Person name.'),
+                      })
+                      .optional()
+                      .describe(
+                        'Linked person record when the sponsor resolves to a known legislator.',
+                      ),
                   })
                   .describe('Sponsorship record.'),
               )
@@ -381,6 +404,13 @@ export const searchBills = tool('openstates_search_bills', {
       recovery:
         'Provide a jurisdiction (state name or OCD-ID) or a full-text search term via q, or both.',
     },
+    {
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout — the query is too broad.',
+      recovery:
+        'Narrow the search: add a jurisdiction, a session, or an action_since/updated_since date filter, or use a more distinctive q term.',
+    },
   ],
 
   async handler(input, ctx) {
@@ -479,12 +509,17 @@ export const searchBills = tool('openstates_search_bills', {
         );
       }
       if (bill.latest_passage_date) lines.push(`**Passed:** ${bill.latest_passage_date}`);
+      if (bill.updated_at) lines.push(`**Updated:** ${bill.updated_at}`);
+      if (bill.openstates_url) lines.push(`**URL:** ${bill.openstates_url}`);
       if (bill.sponsorships?.length) {
         lines.push('');
         lines.push('**Sponsors:**');
         for (const s of bill.sponsorships) {
           const primary = s.primary ? '**Primary**' : 'Cosponsor';
-          lines.push(`- ${primary}: ${s.name} (${s.classification}, entity: ${s.entity_type})`);
+          const person = s.person ? ` [person: ${s.person.name} (${s.person.id})]` : '';
+          lines.push(
+            `- ${primary}: ${s.name} (${s.classification}, entity: ${s.entity_type})${person}`,
+          );
         }
       }
       if (bill.abstracts?.length) {

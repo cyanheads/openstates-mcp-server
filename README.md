@@ -31,7 +31,7 @@
 |:---|:---|
 | `openstates_search_bills` | Search state legislative bills across all covered US jurisdictions with full-text search, jurisdiction/session filtering, subject tags, and sponsor lookups |
 | `openstates_get_bill` | Fetch full detail for a specific bill by OCD ID or three-part path (jurisdiction + session + bill_id) |
-| `openstates_search_people` | Search state legislators and officials by name, jurisdiction, chamber, district, or party |
+| `openstates_search_people` | Search state legislators and officials within a jurisdiction by name, chamber, district, or party |
 | `openstates_get_legislators_by_location` | Find all legislators representing a geographic coordinate (latitude/longitude) |
 | `openstates_search_committees` | List committees for a jurisdiction (experimental — not all states have coverage) |
 | `openstates_get_committee` | Fetch committee detail by OCD organization ID, with optional membership roster |
@@ -48,6 +48,8 @@ Search state legislative bills with rich filtering and inline related data.
 - Filter by jurisdiction (state name, two-letter abbreviation, or OCD-ID), session, chamber, classification, subject tags, and sponsor
 - Sort by latest action, first action, or update time — use `sort=latest_action_desc` for bills currently moving through the legislature
 - `include` parameter requests sponsorships, actions, votes, abstracts, versions, and related bills inline — eliminates follow-up `openstates_get_bill` calls for most research workflows
+- Sponsors carry linked person records (OCD person ID + name) when available, so a sponsor chains onward by ID rather than by name match
+- Every result carries `openstates_url` (citable page) and `updated_at` (the field the default `sort=updated_desc` orders by)
 - `action_since`, `updated_since`, and `created_since` date filters for change-tracking
 - Pagination up to 20 results per page
 - Empty-result recovery: echoes applied filters and suggests how to broaden
@@ -68,14 +70,15 @@ Fetch complete bill detail by OCD ID or path lookup.
 
 ### `openstates_search_people`
 
-Search legislators and officials by name, jurisdiction, chamber, or district.
+Search legislators and officials within one jurisdiction by name, chamber, or district.
 
+- `jurisdiction` is required — a search spanning all 56 jurisdictions exceeds the upstream timeout, name-only searches included, so an omitted `jurisdiction` is rejected before any request is issued. Use `openstates_list_jurisdictions` to pick one, or `openstates_get_legislators_by_location` when you have coordinates but no state
 - Case-insensitive substring matching on name
 - `org_classification` targets a role type: `upper` (Senate), `lower` (House/Assembly), `executive` (governors and executive officials), `legislature` (every legislator — both chambers merged into one paginated set, all upper members then all lower)
 - Omitting `org_classification` is not equivalent to `legislature` — it returns every officeholder, executive officials included
 - `include=offices` returns phone, fax, and mailing address
 - `include=links` returns website and social media links
-- Strongly recommended to provide `jurisdiction` — omitting it returns legislators across all states
+- Every result carries the member's official headshot URL (`image`) when published, and the OCD division their district maps to (`current_role.division_id`)
 
 ---
 
@@ -102,7 +105,7 @@ Discover and look up jurisdiction coverage metadata.
 
 ### Committee and event tools (experimental)
 
-`openstates_search_committees`, `openstates_get_committee`, `openstates_search_events`, and `openstates_get_event` are experimental — Open States is actively working to restore committee support and most states do not publish event data. Empty results may indicate the state lacks data, not that no committees or events exist. The two search tools (`openstates_search_committees` and `openstates_search_events`) include a `coverageNote` field in their output documenting this limitation.
+`openstates_search_committees`, `openstates_get_committee`, `openstates_search_events`, and `openstates_get_event` are experimental — Open States is actively working to restore committee support and most states do not publish event data. Empty results may indicate the state lacks data, not that no committees or events exist. The two search tools (`openstates_search_committees` and `openstates_search_events`) include a `coverageNote` field in their output documenting this limitation, and both require a `jurisdiction` — a request spanning all 56 exceeds the upstream timeout, so an omitted one is rejected before any request is issued.
 
 ## Resources and prompts
 
@@ -246,6 +249,8 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 |:---|:---|:---|
 | `OPENSTATES_API_KEY` | **Required.** Open States API key from [open.pluralpolicy.com](https://open.pluralpolicy.com/accounts/profile/). | — |
 | `OPENSTATES_API_BASE_URL` | Open States API base URL. | `https://v3.openstates.org` |
+| `OPENSTATES_DAILY_REQUEST_BUDGET` | Maximum upstream requests per rolling 24 hours. Once spent, calls are rejected before the request is issued, so an over-budget call costs nothing upstream. The default matches the v3 free-tier daily cap — raise it if your key's tier allows more. | `250` |
+| `OPENSTATES_REQUEST_TIMEOUT_MS` | Per-attempt upstream deadline in milliseconds (minimum `1000`). Expiry is non-retryable, so a request that cannot complete costs one wait rather than four. Open States answers a scoped query anywhere from under a second to ~57s and its own gateway gives up near 60s — lower this to fail sooner, raise it to wait out a slow query. | `45000` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`. | `stdio` |
 | `MCP_HTTP_PORT` | HTTP server port. | `3010` |
 | `MCP_HTTP_ENDPOINT_PATH` | HTTP endpoint path. | `/mcp` |

@@ -246,7 +246,7 @@ describe('searchPeople — upstream errors bubble unchanged', () => {
     const originalErr = new McpError(JsonRpcErrorCode.InvalidParams, 'Bad request');
     mockService.searchPeople.mockRejectedValue(originalErr);
     const ctx = createMockContext();
-    const input = searchPeople.input.parse({ name: 'a' });
+    const input = searchPeople.input.parse({ jurisdiction: 'wa', name: 'a' });
     await expect(searchPeople.handler(input, ctx)).rejects.toBe(originalErr);
   });
 
@@ -254,7 +254,7 @@ describe('searchPeople — upstream errors bubble unchanged', () => {
     const originalErr = new McpError(JsonRpcErrorCode.ServiceUnavailable, 'API down');
     mockService.searchPeople.mockRejectedValue(originalErr);
     const ctx = createMockContext();
-    const input = searchPeople.input.parse({ name: 'J' });
+    const input = searchPeople.input.parse({ jurisdiction: 'wa', name: 'J' });
     await expect(searchPeople.handler(input, ctx)).rejects.toBe(originalErr);
   });
 });

@@ -54,6 +54,33 @@ describe('searchPeople', () => {
     expect(result.results[0].party).toBe('Democratic');
   });
 
+  /**
+   * `GET /people` with no jurisdiction — and `GET /people?name=…` alone — sits on the upstream
+   * gateway for its full ~60s window and answers 504, so the all-states mode the description
+   * used to advertise cannot complete. Guard before the request so the agent gets a typed reason
+   * and a recovery hint naming openstates_list_jurisdictions, not a timeout minutes later.
+   */
+  it('throws jurisdiction_required when jurisdiction is omitted, without calling the service', async () => {
+    const ctx = createMockContext({ errors: searchPeople.errors });
+    const input = searchPeople.input.parse({});
+    await expect(searchPeople.handler(input, ctx)).rejects.toMatchObject({
+      data: { reason: 'jurisdiction_required' },
+    });
+    expect(mockService.searchPeople).not.toHaveBeenCalled();
+  });
+
+  it('rejects a name-only search — a name does not scope the all-states query', async () => {
+    const ctx = createMockContext({ errors: searchPeople.errors });
+    const input = searchPeople.input.parse({ name: 'Ferguson' });
+    await expect(searchPeople.handler(input, ctx)).rejects.toMatchObject({
+      data: {
+        reason: 'jurisdiction_required',
+        recovery: { hint: expect.stringContaining('openstates_list_jurisdictions') },
+      },
+    });
+    expect(mockService.searchPeople).not.toHaveBeenCalled();
+  });
+
   it('returns results for name search', async () => {
     const ctx = createMockContext();
     const input = searchPeople.input.parse({ jurisdiction: 'wa', name: 'Smith' });
@@ -149,6 +176,77 @@ describe('searchPeople', () => {
     expect(text).toContain('Jane Smith');
     // Should not throw on null current_role
     expect(text).toContain('ocd-person/abc123');
+  });
+
+  /**
+   * `/people` returns both fields on every record; the output schema decides whether a client
+   * ever sees them. The headshot is what profile and constituent-facing output needs, and the
+   * division ID is the stable handle for the district the label only names loosely.
+   */
+  describe('image and current_role.division_id (issue #27)', () => {
+    const enrichedPerson = {
+      ...mockPerson,
+      image: 'https://data.openstates.org/images/small/ocd-person/abc123',
+      current_role: {
+        ...mockPerson.current_role,
+        division_id: 'ocd-division/country:us/state:wa/sldu:37',
+      },
+    };
+
+    it('keeps both in structuredContent', async () => {
+      mockService.searchPeople.mockResolvedValue({
+        results: [enrichedPerson],
+        pagination: mockPeopleResult.pagination,
+      });
+      const ctx = createMockContext();
+      const input = searchPeople.input.parse({ jurisdiction: 'wa' });
+      const structured = searchPeople.output.parse(await searchPeople.handler(input, ctx));
+      const person = structured.results[0];
+      expect(person?.image).toBe('https://data.openstates.org/images/small/ocd-person/abc123');
+      expect(person?.current_role?.division_id).toBe('ocd-division/country:us/state:wa/sldu:37');
+    });
+
+    it('renders both in format()', () => {
+      const blocks = searchPeople.format!({
+        results: [enrichedPerson],
+        pagination: mockPeopleResult.pagination,
+      });
+      const text = (blocks[0] as { text: string }).text;
+      expect(text).toContain('https://data.openstates.org/images/small/ocd-person/abc123');
+      expect(text).toContain('ocd-division/country:us/state:wa/sldu:37');
+    });
+
+    it('omits both when upstream carries neither (sparse payload)', () => {
+      const structured = searchPeople.output.parse(mockPeopleResult);
+      const person = structured.results[0];
+      expect(person?.image).toBeUndefined();
+      expect(person?.current_role?.division_id).toBeUndefined();
+
+      const text = (searchPeople.format!(structured)[0] as { text: string }).text;
+      expect(text).toContain('Jane Smith');
+      expect(text).not.toContain('**Photo:**');
+      expect(text).not.toContain('**Division:**');
+    });
+
+    it('renders no division line for an undistricted role carrying a null division_id', () => {
+      const atLarge = {
+        ...mockPerson,
+        current_role: {
+          title: 'Delegate',
+          org_classification: 'lower',
+          district: null,
+          division_id: null,
+        },
+      };
+      const structured = searchPeople.output.parse({
+        results: [atLarge],
+        pagination: mockPeopleResult.pagination,
+      });
+      expect(structured.results[0]?.current_role?.division_id).toBeNull();
+      const text = (searchPeople.format!(structured)[0] as { text: string }).text;
+      expect(text).toContain('Delegate');
+      expect(text).not.toContain('**Division:**');
+    });
   });
 
   it('echoes applied filters in enrichment for self-verification', async () => {

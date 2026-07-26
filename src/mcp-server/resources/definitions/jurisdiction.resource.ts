@@ -28,6 +28,13 @@ export const jurisdictionResource = resource('openstates://jurisdiction/{jurisdi
       recovery:
         'Use openstates_list_jurisdictions to discover valid jurisdiction IDs. States use the pattern: ocd-jurisdiction/country:us/state:{2-letter-abbr}/government.',
     },
+    {
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout.',
+      recovery:
+        'Retry the read once; if it repeats, call openstates_get_jurisdiction without include=legislative_sessions for the smaller record.',
+    },
   ],
 
   async handler(params, ctx) {

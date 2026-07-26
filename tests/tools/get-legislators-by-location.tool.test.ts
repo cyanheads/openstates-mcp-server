@@ -97,6 +97,59 @@ describe('getLegislatorsByLocation', () => {
     expect(text).toContain('1 legislators found');
   });
 
+  /**
+   * The constituent-facing tool: the headshot and the OCD division of the district a coordinate
+   * falls in are exactly what a "who represents this address" answer renders, and both were
+   * stripped by the output schema despite `/people.geo` returning them.
+   */
+  describe('image and current_role.division_id (issue #27)', () => {
+    const enrichedPerson = {
+      ...mockPerson,
+      image: 'https://data.openstates.org/images/small/ocd-person/abc123',
+      current_role: {
+        ...mockPerson.current_role,
+        division_id: 'ocd-division/country:us/state:wa/sldu:37',
+      },
+    };
+
+    it('keeps both in structuredContent', async () => {
+      mockService.getPeopleByGeo.mockResolvedValue({
+        results: [enrichedPerson],
+        pagination: { page: 1, per_page: 1, max_page: 1, total_items: 1 },
+      });
+      const ctx = createMockContext();
+      const input = getLegislatorsByLocation.input.parse({
+        latitude: 47.6062,
+        longitude: -122.3321,
+      });
+      const structured = getLegislatorsByLocation.output.parse(
+        await getLegislatorsByLocation.handler(input, ctx),
+      );
+      const person = structured.legislators[0];
+      expect(person?.image).toBe('https://data.openstates.org/images/small/ocd-person/abc123');
+      expect(person?.current_role?.division_id).toBe('ocd-division/country:us/state:wa/sldu:37');
+    });
+
+    it('renders both in format()', () => {
+      const blocks = getLegislatorsByLocation.format!({ legislators: [enrichedPerson] });
+      const text = (blocks[0] as { text: string }).text;
+      expect(text).toContain('https://data.openstates.org/images/small/ocd-person/abc123');
+      expect(text).toContain('ocd-division/country:us/state:wa/sldu:37');
+    });
+
+    it('omits both when upstream carries neither (sparse payload)', () => {
+      const structured = getLegislatorsByLocation.output.parse({ legislators: [mockPerson] });
+      const person = structured.legislators[0];
+      expect(person?.image).toBeUndefined();
+      expect(person?.current_role?.division_id).toBeUndefined();
+
+      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      expect(text).toContain('Jane Smith');
+      expect(text).not.toContain('**Photo:**');
+      expect(text).not.toContain('**Division:**');
+    });
+  });
+
   it('formats zero legislators when none returned', () => {
     const result = {
       legislators: [],

@@ -77,6 +77,13 @@ export const getCommittee = tool('openstates_get_committee', {
       recovery:
         'Use openstates_search_committees to discover valid committee IDs for a jurisdiction. Note that committee data is experimental and not all states have coverage.',
     },
+    {
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout.',
+      recovery:
+        'Retry the lookup once; if it repeats, request fewer include values — memberships is the one that enlarges the upstream response.',
+    },
   ],
 
   async handler(input, ctx) {

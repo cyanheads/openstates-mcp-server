@@ -4,6 +4,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const CommitteeIncludeEnum = z.enum(['memberships', 'links', 'sources']);
@@ -11,14 +12,14 @@ const CommitteeIncludeEnum = z.enum(['memberships', 'links', 'sources']);
 export const searchCommittees = tool('openstates_search_committees', {
   title: 'Search Committees',
   description:
-    'List committees for a jurisdiction. Experimental — Open States is actively working to restore committee support and not all states have data. Use chamber to scope to upper (senate) or lower (house) committees. Use classification=subcommittee to find subcommittees of a parent. Use include=memberships to get the full roster with member roles. The coverageNote field in the output will always note the experimental coverage limitations.',
+    'List committees for a jurisdiction. jurisdiction is required — a request spanning all 56 jurisdictions exceeds the upstream timeout, so scope every call to a single state; use openstates_list_jurisdictions to pick one. Experimental — Open States is actively working to restore committee support and not all states have data. Use chamber to scope to upper (senate) or lower (house) committees. Use classification=subcommittee to find subcommittees of a parent. Use include=memberships to get the full roster with member roles. The coverageNote field in the output will always note the experimental coverage limitations.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
     jurisdiction: z
       .string()
       .optional()
       .describe(
-        'State name, abbreviation, or OCD-ID. Omitting returns no committees rather than searching all states — supply a jurisdiction to get results.',
+        'State name, abbreviation, or OCD-ID. Required — an all-states request exceeds the upstream timeout, so omitting it is rejected before any request is issued.',
       ),
     classification: z
       .enum(['committee', 'subcommittee'])
@@ -138,8 +139,32 @@ export const searchCommittees = tool('openstates_search_committees', {
       render: (v) => `Filters: ${JSON.stringify(v)}`,
     },
   },
+  errors: [
+    {
+      reason: 'jurisdiction_required',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'jurisdiction was omitted — an all-states committee request exceeds the upstream timeout.',
+      recovery:
+        'Provide a jurisdiction (state name, abbreviation, or OCD-ID); openstates_list_jurisdictions lists every valid value.',
+    },
+    {
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout — the query is too broad.',
+      recovery:
+        'Narrow the request: keep the jurisdiction, add chamber or classification, and drop any include values you do not need.',
+    },
+  ],
 
   async handler(input, ctx) {
+    if (!input.jurisdiction) {
+      throw ctx.fail(
+        'jurisdiction_required',
+        'jurisdiction is required for openstates_search_committees.',
+        { ...ctx.recoveryFor('jurisdiction_required') },
+      );
+    }
+
     const svc = getOpenStatesApiService();
     const result = await svc.searchCommittees(
       {

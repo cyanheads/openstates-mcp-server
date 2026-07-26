@@ -4,6 +4,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const JurisdictionIncludeEnum = z.enum(['organizations', 'legislative_sessions', 'latest_runs']);
@@ -131,6 +132,15 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
     page: z.number().describe('Current page returned.'),
     maxPage: z.number().describe('Total pages available.'),
   },
+  errors: [
+    {
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout.',
+      recovery:
+        'Retry once; if it repeats, drop the include values and keep classification="state", which is the smallest inventory request.',
+    },
+  ],
 
   async handler(input, ctx) {
     const svc = getOpenStatesApiService();

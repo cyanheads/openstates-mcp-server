@@ -78,6 +78,12 @@ export const getBill = tool('openstates_get_bill', {
     latest_action_date: z.string().nullable().describe('Date of most recent action.'),
     latest_action_description: z.string().nullable().describe('Most recent action description.'),
     latest_passage_date: z.string().nullable().describe('Date bill passed (when applicable).'),
+    updated_at: z
+      .string()
+      .optional()
+      .describe(
+        'Timestamp Open States last updated this record — the field openstates_search_bills sorts by under the default sort=updated_desc.',
+      ),
     openstates_url: z.string().optional().describe('Open States URL for this bill.'),
     sponsorships: z
       .array(
@@ -277,6 +283,13 @@ export const getBill = tool('openstates_get_bill', {
       recovery:
         'Verify the session identifier with openstates_get_jurisdiction and confirm the bill_id format matches the legislature convention (e.g., "HB 1000" not "HB1000").',
     },
+    {
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout.',
+      recovery:
+        'Retry the lookup once; if it repeats, request fewer include values — votes, versions, and documents each enlarge the upstream response.',
+    },
   ],
 
   async handler(input, ctx) {
@@ -336,6 +349,7 @@ export const getBill = tool('openstates_get_bill', {
       );
     }
     if (result.latest_passage_date) lines.push(`**Passed:** ${result.latest_passage_date}`);
+    if (result.updated_at) lines.push(`**Updated:** ${result.updated_at}`);
     if (result.openstates_url) lines.push(`**URL:** ${result.openstates_url}`);
 
     if (result.abstracts?.length) {
