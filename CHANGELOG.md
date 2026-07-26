@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.16](changelog/0.1.x/0.1.16.md) — 2026-07-26
+
+CLAUDE.md reconciled with the framework template: adds the missing What's Next? and Server identity and instructions sections, replaces stale ctx.sample references with ctx.enrich/ctx.content, and documents ctx.state.getMany, z.stringbool(), and the retryable/ctx.recoveryFor() error flow.
+
 ## [0.1.15](changelog/0.1.x/0.1.15.md) — 2026-07-26
 
 A caller-owned deadline stops upstream timeouts from retrying into a ~4x wait; the daily budget and per-attempt timeout are now configurable; search_people/search_committees require jurisdiction to avoid the same timeout; several tools surface sponsor links, URLs, timestamps, headshots, and OCD division IDs the output schemas previously dropped.
