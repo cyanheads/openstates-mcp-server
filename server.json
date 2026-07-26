@@ -32,6 +32,20 @@
           "isRequired": true
         },
         {
+          "name": "OPENSTATES_DAILY_REQUEST_BUDGET",
+          "description": "Maximum upstream Open States requests per rolling 24 hours. Rejects before the request is issued once spent. Defaults to the v3 free-tier daily cap.",
+          "format": "number",
+          "isRequired": false,
+          "default": "250"
+        },
+        {
+          "name": "OPENSTATES_REQUEST_TIMEOUT_MS",
+          "description": "Per-attempt upstream request deadline in milliseconds (minimum 1000). Expiry is non-retryable. Open States answers a scoped query in under a second to ~57s and its gateway gives up near 60s.",
+          "format": "number",
+          "isRequired": false,
+          "default": "45000"
+        },
+        {
           "name": "MCP_LOG_LEVEL",
           "description": "Sets the minimum log level for output (e.g., 'debug', 'info', 'warn').",
           "format": "string",
@@ -59,6 +73,20 @@
           "description": "Open States API key from open.pluralpolicy.com. Required to make any API requests.",
           "format": "string",
           "isRequired": true
+        },
+        {
+          "name": "OPENSTATES_DAILY_REQUEST_BUDGET",
+          "description": "Maximum upstream Open States requests per rolling 24 hours. Rejects before the request is issued once spent. Defaults to the v3 free-tier daily cap.",
+          "format": "number",
+          "isRequired": false,
+          "default": "250"
+        },
+        {
+          "name": "OPENSTATES_REQUEST_TIMEOUT_MS",
+          "description": "Per-attempt upstream request deadline in milliseconds (minimum 1000). Expiry is non-retryable. Open States answers a scoped query in under a second to ~57s and its gateway gives up near 60s.",
+          "format": "number",
+          "isRequired": false,
+          "default": "45000"
         },
         {
           "name": "MCP_HTTP_HOST",

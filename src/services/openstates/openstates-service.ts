@@ -10,14 +10,11 @@ import {
   McpError,
   rateLimited,
   serviceUnavailable,
+  timeout,
 } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
-import {
-  httpErrorFromResponse,
-  logger,
-  RateLimiter,
-  withRetry,
-} from '@cyanheads/mcp-ts-core/utils';
+import type { RequestContext } from '@cyanheads/mcp-ts-core/utils';
+import { fetchWithTimeout, logger, RateLimiter, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import type { ServerConfig } from '@/config/server-config.js';
 import type {
   Bill,
@@ -74,6 +71,7 @@ function normalizePerson(raw: RawPerson): Person {
     email: raw.email ?? '',
     openstates_url: raw.openstates_url ?? '',
   };
+  if (raw.image) person.image = raw.image;
   if (raw.offices?.length) person.offices = raw.offices;
   if (raw.links?.length) person.links = raw.links;
   if (raw.other_names?.length) person.other_names = raw.other_names;
@@ -172,20 +170,55 @@ function normalizeCommitteeJurisdiction(value: string): string {
   return JURISDICTION_NAME_TO_ABBR[value.trim().toLowerCase()] ?? value;
 }
 
-/**
- * Fail-fast daily request budget for the shared Open States API key. The v3 free tier caps at
- * ~10 req/min and 250 req/day; on the hosted deployment every caller shares one key, so the daily
- * cap is the binding constraint. The guard rejects before `fetch()` once the budget is spent —
- * costing zero upstream requests — rather than waiting on a slow-refilling daily window.
- * Overridable per instance (tests, a paid tier); defaults to the documented free-tier cap.
- */
-const FREE_TIER_DAILY_BUDGET = 250;
-
 /** Rolling window the daily budget is measured over. */
 const BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Rejection text for the daily-budget guard, interpolated with `{waitTime}` by the framework
+ * `RateLimiter`. The default template reads as an upstream 429 ("Rate limit exceeded. Please try
+ * again in 84213 seconds."), which invites a retry against a cap this server imposes on itself;
+ * naming the budget and the env var that raises it gives the caller the only action that works.
+ */
+const BUDGET_EXCEEDED_MESSAGE =
+  "This server's own daily Open States request budget is spent — this is a self-imposed cap, not a rejection from Open States. It resets in {waitTime} seconds; retrying before then fails again. Raise it with the OPENSTATES_DAILY_REQUEST_BUDGET environment variable if your API key's tier allows more than the free tier's 250 requests/day.";
+
 /** One shared-key budget bucket — the hosted deployment rations a single upstream key across all callers. */
 const RATE_LIMIT_KEY = 'openstates:shared-key';
+
+/**
+ * Multiplier for the backstop handed to `fetchWithTimeout`'s own timer, kept deliberately later
+ * than the service's deadline so the service's always fires first and the helper's never does.
+ *
+ * The service arms its own deadline (see `fetchAttempt`) rather than delegating to the helper's
+ * timer, so expiry is observable on a signal it owns — `deadline.signal.aborted` separates "this
+ * client ran out of patience" from "the caller went away" regardless of how the helper classifies
+ * the abort it sees. Keeping the helper's timer inert makes the fail-fast path independent of that
+ * classification, which has changed across framework versions.
+ */
+const FETCH_BACKSTOP_MULTIPLIER = 2;
+
+/**
+ * Statuses with a dedicated non-retryable path in `classifyUpstreamFailure`. Listing them keeps
+ * `fetchWithTimeout` from logging an expected, already-handled outcome at `error` severity; the
+ * thrown error is unchanged.
+ */
+const EXPECTED_UPSTREAM_STATUSES = [429, 504];
+
+/**
+ * Log bindings for `fetchWithTimeout`. The handler-facing `Context` carries no index signature,
+ * so it is not assignable to the open `RequestContext` bag the helper takes — project the
+ * correlation fields explicitly rather than casting.
+ */
+function fetchLogContext(ctx: Context): RequestContext {
+  return {
+    requestId: ctx.requestId,
+    timestamp: ctx.timestamp,
+    tenantId: ctx.tenantId,
+    traceId: ctx.traceId,
+    spanId: ctx.spanId,
+    operation: 'OpenStatesApiService.fetchJson',
+  };
+}
 
 /**
  * `ctx.state` cache-key namespace for `fetchJson` responses. The storage key validator only accepts
@@ -224,17 +257,30 @@ export class OpenStatesApiService {
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly rateLimiter: RateLimiter;
+  /** Per-attempt upstream deadline, from `OPENSTATES_REQUEST_TIMEOUT_MS`. */
+  private readonly requestTimeoutMs: number;
 
+  /**
+   * @param dailyRequestBudget - Fail-fast daily request budget for the shared API key. Defaults to
+   *   the configured `OPENSTATES_DAILY_REQUEST_BUDGET` value so a deployment's own setting applies
+   *   without the caller restating it; the explicit parameter stays for direct construction in
+   *   tests, where a small budget makes the guard cheap to exercise.
+   */
   constructor(
     appConfig: AppConfig,
     _storage: StorageService,
     serverConfig: ServerConfig,
-    dailyRequestBudget: number = FREE_TIER_DAILY_BUDGET,
+    dailyRequestBudget: number = serverConfig.dailyRequestBudget,
   ) {
     this.baseUrl = serverConfig.apiBaseUrl.replace(/\/$/, '');
     this.apiKey = serverConfig.apiKey;
+    this.requestTimeoutMs = serverConfig.requestTimeoutMs;
     this.rateLimiter = new RateLimiter(appConfig, logger);
-    this.rateLimiter.configure({ maxRequests: dailyRequestBudget, windowMs: BUDGET_WINDOW_MS });
+    this.rateLimiter.configure({
+      maxRequests: dailyRequestBudget,
+      windowMs: BUDGET_WINDOW_MS,
+      errorMessage: BUDGET_EXCEEDED_MESSAGE,
+    });
   }
 
   // --- Internal HTTP plumbing ---
@@ -269,24 +315,7 @@ export class OpenStatesApiService {
         // cache miss, so cache hits never consume the budget.
         this.checkRateBudget();
 
-        const response = await fetch(url, {
-          headers: {
-            'X-API-KEY': this.apiKey,
-            Accept: 'application/json',
-          },
-          signal: ctx.signal,
-        });
-
-        if (!response.ok) {
-          // A 429 is the shared key's rate cap — deterministic, not a transient blip — so mark it
-          // non-retryable and let withRetry fail fast instead of burning the rest of the budget on
-          // a capped endpoint. Every other status keeps its default classification (5xx transient).
-          throw await httpErrorFromResponse(response, {
-            service: 'OpenStates',
-            data: { url, ...(response.status === 429 ? { retryable: false } : {}) },
-          });
-        }
-
+        const response = await this.fetchAttempt(url, ctx);
         const text = await response.text();
         // HTML from a JSON API is a block / rate-limit page, not a recoverable transient — fail
         // fast so withRetry doesn't retry the block page four times.
@@ -310,6 +339,111 @@ export class OpenStatesApiService {
     // but a good response is ever cached.
     await ctx.state.set(cacheKey, result, { ttl: cacheTtlForUrl(url) });
     return result;
+  }
+
+  /**
+   * One upstream attempt, bounded by a deadline this service owns rather than the helper's.
+   *
+   * The deadline signal is composed with `ctx.signal` so either can cancel the request, but it
+   * stays separately observable — `deadline.signal.aborted` distinguishes "this client ran out of
+   * patience" from "the caller went away", which the composed signal alone cannot, and which the
+   * error the helper produces does not reliably encode (see `FETCH_BACKSTOP_MULTIPLIER`).
+   */
+  private async fetchAttempt(url: string, ctx: Context): Promise<Response> {
+    const deadline = new AbortController();
+    // `AbortError`, not `TimeoutError`: from the helper's side this is a caller abort — it
+    // identity-matches only the reason its own timer raises — and naming it a timeout would have
+    // it log the ceiling it was handed, the inert backstop, for a request that never ran that
+    // long. The accurate figure rides the error raised below.
+    const timer = setTimeout(
+      () =>
+        deadline.abort(
+          new DOMException(
+            `Open States did not respond within ${this.requestTimeoutMs}ms.`,
+            'AbortError',
+          ),
+        ),
+      this.requestTimeoutMs,
+    );
+    try {
+      return await fetchWithTimeout(
+        url,
+        this.requestTimeoutMs * FETCH_BACKSTOP_MULTIPLIER,
+        fetchLogContext(ctx),
+        {
+          headers: {
+            'X-API-KEY': this.apiKey,
+            Accept: 'application/json',
+          },
+          signal: AbortSignal.any([deadline.signal, ctx.signal]),
+          expectedStatuses: EXPECTED_UPSTREAM_STATUSES,
+        },
+      );
+    } catch (err) {
+      throw this.classifyUpstreamFailure(err, url, ctx, deadline.signal.aborted);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Re-stamps the upstream failures this service treats as deterministic so `withRetry` fails fast
+   * instead of spending attempts — and shared-key budget — on requests that cannot succeed.
+   *
+   * - **Timeout.** Either this client's own deadline expiring (`deadlineExpired`, the arm that
+   *   fires in practice — upstream takes ~60s to answer `504`, so the deadline lands first) or an
+   *   upstream status that maps to `Timeout` (`504`, `408`, `425`). Retrying either just pays the
+   *   same wait again: whatever made the request exceed the ceiling — an over-broad query, a slow
+   *   gateway — still holds on the next attempt, and the shared-key budget is spent for nothing.
+   *   Carries the `upstream_timeout` reason plus the calling definition's recovery hint, which
+   *   names the narrowing the caller can act on. Keying on the owned signal first rather than on
+   *   the code keeps this correct however the helper classifies an abort.
+   * - **RateLimited.** The shared key's cap: deterministic until the window rolls, so retrying
+   *   only burns the remaining budget against a capped endpoint.
+   *
+   * Everything else passes through with its default classification, so a genuinely transient
+   * `502`/`503` still gets its retries.
+   */
+  private classifyUpstreamFailure(
+    err: unknown,
+    url: string,
+    ctx: Context,
+    deadlineExpired: boolean,
+  ): unknown {
+    const mcpError = err instanceof McpError ? err : undefined;
+    const rawStatus = mcpError?.data?.['status'];
+    const status = typeof rawStatus === 'number' ? rawStatus : undefined;
+
+    if (deadlineExpired || mcpError?.code === JsonRpcErrorCode.Timeout) {
+      const cause =
+        status === undefined
+          ? `did not respond within ${this.requestTimeoutMs / 1000}s`
+          : `returned HTTP ${status}`;
+      return timeout(
+        // States only what was observed. Query breadth is the usual cause but not a fact this
+        // client can establish — upstream is also slow for well-scoped queries at times — so the
+        // narrowing advice belongs in the recovery hint, not in an assertion about the query.
+        `Open States ${cause}.`,
+        {
+          url,
+          ...(status === undefined ? {} : { status }),
+          reason: 'upstream_timeout',
+          retryable: false,
+          ...ctx.recoveryFor('upstream_timeout'),
+        },
+        { cause: err },
+      );
+    }
+
+    if (mcpError?.code === JsonRpcErrorCode.RateLimited) {
+      return rateLimited(
+        mcpError.message,
+        { ...mcpError.data, url, retryable: false },
+        { cause: mcpError },
+      );
+    }
+
+    return err;
   }
 
   /**

@@ -5,7 +5,7 @@
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, type McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,13 +13,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // public searchPeople / searchCommittees codepaths, which call the private
 // helpers internally. Import the class directly so we can construct a
 // lightweight instance without touching env vars.
-import { cacheKeyForUrl, OpenStatesApiService } from '@/services/openstates/openstates-service.js';
+import { searchBills } from '@/mcp-server/tools/definitions/search-bills.tool.js';
+import {
+  cacheKeyForUrl,
+  getOpenStatesApiService,
+  initOpenStatesApiService,
+  OpenStatesApiService,
+} from '@/services/openstates/openstates-service.js';
 import type { PersonListResponse, RawPerson } from '@/services/openstates/types.js';
 
 // Minimal stubs so the constructor doesn't blow up.
 const fakeAppConfig = {} as Parameters<typeof OpenStatesApiService.prototype.constructor>[0];
 const fakeStorage = {} as Parameters<typeof OpenStatesApiService.prototype.constructor>[1];
-const fakeServerConfig = { apiKey: 'test-key', apiBaseUrl: 'https://v3.openstates.org' };
+const fakeServerConfig = {
+  apiKey: 'test-key',
+  apiBaseUrl: 'https://v3.openstates.org',
+  dailyRequestBudget: 250,
+  requestTimeoutMs: 45_000,
+};
 
 // --------------------------------------------------------------------------
 // normalizeParty (exercised via normalizePerson → searchPeople path)
@@ -147,7 +158,7 @@ describe('OpenStatesApiService constructor', () => {
 
   it('strips trailing slash from apiBaseUrl', () => {
     const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, {
-      apiKey: 'k',
+      ...fakeServerConfig,
       apiBaseUrl: 'https://v3.openstates.org/',
     });
     // We can't access baseUrl directly (private) but we can verify the service
@@ -217,6 +228,26 @@ function jsonResponse(status: number, body: unknown): Response {
     headers: { 'Content-Type': 'application/json' },
   });
 }
+
+/**
+ * A `fetch` aborted mid-flight rejects with the signal's abort *reason* — whatever value the
+ * aborting code passed — not with a synthesized `AbortError`. This mock reproduces that, which
+ * is the whole point of it: rejecting with a hand-built `Error` instead exercises a
+ * classification branch production never reaches, and would let the deterministic-failure
+ * handling regress silently while the tests stayed green.
+ */
+const abortRejectingFetch = () =>
+  vi.fn(
+    (_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        signal?.addEventListener('abort', () => reject(signal.reason));
+      }),
+  );
 
 /**
  * Stands in for the live `/people` endpoint, reproducing the two upstream limits the union
@@ -460,27 +491,39 @@ describe('searchPeople — other classifications are untouched', () => {
 
 /**
  * A raw upstream person carrying the three enrichment arrays that `include=other_names`,
- * `other_identifiers`, and `sources` request. Pre-fix, `normalizePerson` rebuilt the public
- * `Person` record field-by-field and copied only `offices`/`links`, so these three were dropped
- * inside the service — before any tool output schema or format() could ever see them, and
- * regardless of what those tools declared. The strip lives on the one function that backs both
- * the `/people` (search_people) and `/people.geo` (get_legislators_by_location) paths, so both
- * are exercised below to prove the single fix covers both tools.
+ * `other_identifiers`, and `sources` request, plus the unconditional `image` headshot URL.
+ * Pre-fix, `normalizePerson` rebuilt the public `Person` record field-by-field and copied only
+ * `offices`/`links`, so these were dropped inside the service — before any tool output schema or
+ * format() could ever see them, and regardless of what those tools declared. The strip lives on
+ * the one function that backs both the `/people` (search_people) and `/people.geo`
+ * (get_legislators_by_location) paths, so both are exercised below to prove the single fix covers
+ * both tools. `current_role` is copied by reference, so `division_id` rides along untouched — the
+ * assertions below pin that, since a future field-by-field rebuild of the role would silently
+ * reintroduce the same class of strip.
  */
 const RAW_PERSON_WITH_ENRICHMENT: RawPerson = {
   id: 'ocd-person/smith',
   name: 'Jane Smith',
   party: 'Democratic',
-  current_role: { title: 'Senator', org_classification: 'upper', district: '37' },
+  current_role: {
+    title: 'Senator',
+    org_classification: 'upper',
+    district: '37',
+    division_id: 'ocd-division/country:us/state:wa/sldu:37',
+  },
   jurisdiction: { id: 'ocd-jurisdiction/country:us/state:wa/government', name: 'Washington' },
   given_name: 'Jane',
   family_name: 'Smith',
   email: 'jane.smith@leg.wa.gov',
   openstates_url: 'https://openstates.org/person/jane-smith/',
+  image: 'https://data.openstates.org/images/small/ocd-person/smith',
   other_names: [{ name: 'Jane A. Smith', note: 'ballot name' }],
   other_identifiers: [{ identifier: 'WA000123', scheme: 'legacy_openstates' }],
   sources: [{ url: 'https://leg.wa.gov/senators/smith', note: 'official roster' }],
 };
+
+const EXPECTED_IMAGE = 'https://data.openstates.org/images/small/ocd-person/smith';
+const EXPECTED_DIVISION_ID = 'ocd-division/country:us/state:wa/sldu:37';
 
 const EXPECTED_OTHER_NAMES = [{ name: 'Jane A. Smith', note: 'ballot name' }];
 const EXPECTED_OTHER_IDENTIFIERS = [{ identifier: 'WA000123', scheme: 'legacy_openstates' }];
@@ -540,6 +583,25 @@ describe('normalizePerson — include enrichment survives normalization', () => 
     expect(person?.sources).toEqual(EXPECTED_SOURCES);
   });
 
+  it('carries image and current_role.division_id through the /people path', async () => {
+    stubEnrichmentPerson();
+    const res = await svc.searchPeople(
+      { jurisdiction: 'wa', org_classification: 'upper', page: 1, per_page: 10 },
+      ctx,
+    );
+    const person = res.results[0];
+    expect(person?.image).toBe(EXPECTED_IMAGE);
+    expect(person?.current_role?.division_id).toBe(EXPECTED_DIVISION_ID);
+  });
+
+  it('carries image and current_role.division_id through the /people.geo path', async () => {
+    stubEnrichmentPerson();
+    const res = await svc.getPeopleByGeo(47.6062, -122.3321, undefined, ctx);
+    const person = res.results[0];
+    expect(person?.image).toBe(EXPECTED_IMAGE);
+    expect(person?.current_role?.division_id).toBe(EXPECTED_DIVISION_ID);
+  });
+
   it('omits the enrichment arrays entirely when upstream provides none (sparse payload)', async () => {
     vi.stubGlobal(
       'fetch',
@@ -561,6 +623,9 @@ describe('normalizePerson — include enrichment survives normalization', () => 
     expect(person).not.toHaveProperty('other_names');
     expect(person).not.toHaveProperty('other_identifiers');
     expect(person).not.toHaveProperty('sources');
+    // A member with no published photo must come back without the key rather than with an
+    // empty string a client would render as a broken image.
+    expect(person).not.toHaveProperty('image');
   });
 });
 
@@ -917,6 +982,131 @@ describe('fetchJson — caching and rate-limit fail-fast', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * An over-broad query sits on the upstream gateway for ~60s and comes back 504, which maps to
+   * `Timeout` — a transient code. Absent `retryable: false`, withRetry ran four of them back to
+   * back and the caller blocked for minutes before getting an error with no recovery guidance.
+   * A gateway timeout on this API is a statement about the query's cost, not a transient blip.
+   */
+  it('fails fast on HTTP 504 without a retry storm', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response('<html><head><title>504 Gateway Time-out</title></head></html>', {
+          status: 504,
+          statusText: 'Gateway Time-out',
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+
+    await expect(
+      svc.searchBills({ q: 'housing', page: 1, per_page: 1 }, ctx),
+    ).rejects.toMatchObject({
+      code: JsonRpcErrorCode.Timeout,
+      data: { reason: 'upstream_timeout', retryable: false, status: 504 },
+    });
+    // Timeout is a transient code; absent retryable:false, withRetry would run four attempts.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The recovery hint is resolved from the calling definition's `upstream_timeout` contract entry,
+   * so a 504 arrives with the fix named — narrow the query — rather than as a dead end that
+   * invites the agent to retry the same call.
+   */
+  it('carries the calling definition recovery hint on a 504', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(new Response('', { status: 504, statusText: 'Gateway Time-out' })),
+      ),
+    );
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    const contractCtx = createMockContext({
+      tenantId: 'test-tenant',
+      errors: searchBills.errors,
+    });
+
+    await expect(
+      svc.searchBills({ q: 'housing', page: 1, per_page: 1 }, contractCtx),
+    ).rejects.toMatchObject({
+      data: { recovery: { hint: expect.stringContaining('jurisdiction') } },
+    });
+  });
+
+  /**
+   * A genuinely transient upstream fault keeps its retries — only the two deterministic signals
+   * (429, 504) are re-stamped non-retryable, so the fail-fast paths above are targeted rather
+   * than a blanket disabling of the retry policy. One retry is enough to prove it; exhausting
+   * all four would spend the full exponential backoff on the clock.
+   */
+  it('still retries a 503, and succeeds when the retry lands', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('', { status: 503, statusText: 'Service Unavailable' }))
+      .mockResolvedValueOnce(billsPage());
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+
+    const res = await svc.searchBills({ q: 'x', page: 1, per_page: 10 }, ctx);
+    expect(res.pagination.total_items).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * The client-side ceiling is the arm that actually fires in production: upstream takes ~60s to
+   * answer 504, so this deadline lands first. It has to be non-retryable for the same reason —
+   * four bounded attempts is still a multi-minute block on a query that cannot complete.
+   *
+   * Run on real timers against a tiny configured ceiling rather than fake timers against the
+   * default one. Faking them races the deadline against `cacheKeyForUrl`'s `crypto.subtle.digest`:
+   * that resolves off the event loop, which a fake-timer sweep does not wait for, so the sweep can
+   * finish before the deadline is even armed and the request then hangs.
+   */
+  it('fails fast when the per-attempt deadline fires before upstream answers', async () => {
+    const fetchMock = abortRejectingFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, {
+      ...fakeServerConfig,
+      requestTimeoutMs: 100,
+    });
+
+    await expect(
+      svc.searchBills({ q: 'housing', page: 1, per_page: 1 }, ctx),
+    ).rejects.toMatchObject({
+      code: JsonRpcErrorCode.Timeout,
+      data: { reason: 'upstream_timeout', retryable: false },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Caller cancellation is not a statement about the query. Relabelling it `upstream_timeout`
+   * would tell an agent to narrow a search that was never actually run, so the abort has to pass
+   * through with its own classification.
+   */
+  it('does not relabel a caller-cancelled request as an upstream timeout', async () => {
+    const fetchMock = abortRejectingFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    const caller = new AbortController();
+    const cancellableCtx = createMockContext({
+      tenantId: 'test-tenant',
+      signal: caller.signal,
+    });
+
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    const pending = svc
+      .searchBills({ q: 'housing', page: 1, per_page: 1 }, cancellableCtx)
+      .catch((e: unknown) => e);
+    caller.abort();
+    const err = await pending;
+
+    expect(err).toBeInstanceOf(Error);
+    expect((err as McpError).data?.['reason']).not.toBe('upstream_timeout');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('trips the fail-fast budget guard once the daily budget is spent, before any upstream call', async () => {
     const fetchMock = vi.fn(() => Promise.resolve(billsPage()));
     vi.stubGlobal('fetch', fetchMock);
@@ -930,5 +1120,140 @@ describe('fetchJson — caching and rate-limit fail-fast', () => {
       data: { retryable: false }, // re-stamped so withRetry can't retry the guard's own rejection
     });
     expect(fetchMock).toHaveBeenCalledTimes(2); // 3rd request rejected before fetch — zero upstream cost
+  });
+
+  /**
+   * The default `RateLimiter` template ("Rate limit exceeded. Please try again in N seconds.") is
+   * indistinguishable from an Open States 429, so an agent reads the guard as an upstream
+   * rejection and retries. The rejection has to say the cap is this server's own and name the
+   * variable that raises it.
+   */
+  it('names the budget as self-imposed and points at the env var when it trips', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(billsPage())),
+    );
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig, 1);
+
+    await svc.searchBills({ q: 'a', page: 1, per_page: 10 }, ctx);
+    const err = await svc.searchBills({ q: 'b', page: 1, per_page: 10 }, ctx).catch((e) => e);
+
+    expect(err.code).toBe(JsonRpcErrorCode.RateLimited);
+    expect(err.message).toContain('self-imposed');
+    expect(err.message).toContain('OPENSTATES_DAILY_REQUEST_BUDGET');
+    // {waitTime} is interpolated by the framework — an unsubstituted placeholder means the
+    // template never reached the limiter.
+    expect(err.message).not.toContain('{waitTime}');
+    expect(err.message).toMatch(/\d+ seconds/);
+  });
+});
+
+// --------------------------------------------------------------------------
+// The daily budget is configuration, not a constant (issue #28)
+// --------------------------------------------------------------------------
+
+describe('daily request budget — configured value reaches the limiter', () => {
+  let ctx: Context;
+
+  beforeEach(() => {
+    ctx = createMockContext({ tenantId: 'test-tenant' });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const billsPage = () =>
+    jsonResponse(200, {
+      results: [],
+      pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
+    });
+
+  it('enforces the budget carried on the server config through the init/accessor path', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(billsPage()));
+    vi.stubGlobal('fetch', fetchMock);
+    initOpenStatesApiService(fakeAppConfig, fakeStorage, {
+      ...fakeServerConfig,
+      dailyRequestBudget: 2,
+    });
+    const svc = getOpenStatesApiService();
+
+    await svc.searchBills({ q: 'a', page: 1, per_page: 10 }, ctx);
+    await svc.searchBills({ q: 'b', page: 1, per_page: 10 }, ctx);
+    await expect(svc.searchBills({ q: 'c', page: 1, per_page: 10 }, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.RateLimited,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows a higher configured budget than the free-tier default', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(billsPage()));
+    vi.stubGlobal('fetch', fetchMock);
+    initOpenStatesApiService(fakeAppConfig, fakeStorage, {
+      ...fakeServerConfig,
+      dailyRequestBudget: 1000,
+    });
+    const svc = getOpenStatesApiService();
+
+    // 251 distinct URLs — every one over the 250 default must still reach upstream.
+    for (let i = 0; i < 251; i++) {
+      await svc.searchBills({ q: `q${i}`, page: 1, per_page: 10 }, ctx);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(251);
+  });
+});
+
+// --------------------------------------------------------------------------
+// The per-attempt deadline is configuration, not a constant (issue #29)
+// --------------------------------------------------------------------------
+
+describe('per-attempt request timeout — configured value reaches the service', () => {
+  let ctx: Context;
+
+  beforeEach(() => {
+    ctx = createMockContext({ tenantId: 'test-tenant' });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * Arms the service through the init/accessor path with one overridden deadline, against an
+   * upstream that never answers. Ceilings are small so the cases run on real timers — see the
+   * fake-timer race noted on the fail-fast deadline test above.
+   */
+  function serviceWithTimeout(requestTimeoutMs: number) {
+    vi.stubGlobal('fetch', abortRejectingFetch());
+    initOpenStatesApiService(fakeAppConfig, fakeStorage, { ...fakeServerConfig, requestTimeoutMs });
+    return getOpenStatesApiService();
+  }
+
+  it('fires the deadline at the configured ceiling, not the schema default', async () => {
+    const svc = serviceWithTimeout(100);
+    const startedAt = Date.now();
+
+    const err = await svc.searchBills({ q: 'housing', page: 1, per_page: 1 }, ctx).catch((e) => e);
+
+    expect(err).toMatchObject({
+      code: JsonRpcErrorCode.Timeout,
+      data: { reason: 'upstream_timeout', retryable: false },
+    });
+    // The 45s schema default would still have this request in flight.
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+  });
+
+  /**
+   * The point of issue #29: a scoped query upstream answers slowly must survive when the operator
+   * raises the ceiling. Waiting materially longer than the previous case — for the same
+   * never-answering upstream — is what shows the configured value is the one being applied, and
+   * the message quotes it back rather than a constant.
+   */
+  it('waits the longer configured ceiling and names it in the failure', async () => {
+    const svc = serviceWithTimeout(600);
+    const startedAt = Date.now();
+
+    const err = await svc.searchBills({ q: 'housing', page: 1, per_page: 1 }, ctx).catch((e) => e);
+
+    expect((err as McpError).message).toContain('within 0.6s');
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(500);
   });
 });
