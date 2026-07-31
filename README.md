@@ -31,7 +31,7 @@
 |:---|:---|
 | `openstates_search_bills` | Search state legislative bills across all covered US jurisdictions with full-text search, jurisdiction/session filtering, subject tags, and sponsor lookups |
 | `openstates_get_bill` | Fetch full detail for a specific bill by OCD ID or three-part path (jurisdiction + session + bill_id) |
-| `openstates_search_people` | Search state legislators and officials within a jurisdiction by name, chamber, district, or party |
+| `openstates_search_people` | Search state legislators and officials within a jurisdiction by name, chamber, or district |
 | `openstates_get_legislators_by_location` | Find every legislator representing a geographic coordinate (latitude/longitude) — state legislators and the federal delegation |
 | `openstates_search_committees` | List committees for a jurisdiction (experimental — not all states have coverage) |
 | `openstates_get_committee` | Fetch committee detail by OCD organization ID, with optional membership roster |

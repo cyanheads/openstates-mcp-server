@@ -9,7 +9,8 @@ import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchPeople } from '@/mcp-server/tools/definitions/search-people.tool.js';
 
-vi.mock('@/services/openstates/openstates-service.js', () => ({
+vi.mock('@/services/openstates/openstates-service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/openstates/openstates-service.js')>()),
   getOpenStatesApiService: vi.fn(),
 }));
 
@@ -399,5 +400,49 @@ describe('searchPeople — out-of-range page', () => {
     });
     // The upstream constraint survives the remap — it names the range the caller must stay inside.
     expect((err as McpError).message).toContain('invalid page, must be in [1, 5]');
+  });
+});
+
+/**
+ * Regression coverage for issue #39. The description opened by advertising a search "by name,
+ * jurisdiction, chamber, district, or party" while the input schema had no `party` field and the
+ * service never sent one — a model constructing `party` had it dropped by the schema and got an
+ * unfiltered page back with no signal. Upstream `/people` takes no `party` query parameter, so
+ * the claim was withdrawn rather than implemented. `party` stays an output field.
+ */
+describe('searchPeople — party is an output field, not a filter (issue #39)', () => {
+  it('exposes no party input', () => {
+    expect(Object.keys(searchPeople.input.shape)).not.toContain('party');
+  });
+
+  it('does not advertise party among its search dimensions', () => {
+    expect(searchPeople.description).not.toContain('chamber, district, or party');
+    expect(searchPeople.description).toContain('cannot be filtered on');
+  });
+
+  it('silently drops a party key rather than forwarding it', async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    const searchPeopleSpy = vi.fn().mockResolvedValue({
+      results: [mockPerson],
+      pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+    });
+    vi.mocked(getOpenStatesApiService).mockReturnValue({ searchPeople: searchPeopleSpy } as never);
+
+    const input = searchPeople.input.parse({ jurisdiction: 'wa', party: 'Democratic' });
+    expect(input).not.toHaveProperty('party');
+
+    await searchPeople.handler(input, createMockContext());
+    expect(searchPeopleSpy).toHaveBeenCalledWith(
+      expect.not.objectContaining({ party: expect.anything() }),
+      expect.anything(),
+    );
+  });
+
+  it('still reports party on every result', () => {
+    const parsed = searchPeople.output.parse({
+      results: [mockPerson],
+      pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+    });
+    expect(parsed.results[0]?.party).toBe('Democratic');
   });
 });

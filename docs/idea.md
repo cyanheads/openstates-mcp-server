@@ -19,7 +19,7 @@ MCP server wrapping the Open States API v3 — comprehensive US state legislativ
 - **Key endpoints**:
   - `GET /bills` — search/filter bills by state, session, subject, sponsor, status
   - `GET /bills/{jurisdiction}/{session}/{identifier}` — bill detail with votes, sponsors, actions
-  - `GET /people` — search legislators by name, state, chamber, party, district
+  - `GET /people` — search legislators by name, state, chamber, district
   - `GET /people.geo` — find legislators by lat/lng (constituent lookup)
   - `GET /committees` — committee listings
   - `GET /events` — hearings, floor sessions, committee meetings
