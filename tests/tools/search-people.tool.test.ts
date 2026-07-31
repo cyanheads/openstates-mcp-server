@@ -80,10 +80,12 @@ describe('searchPeople', () => {
       expect(parsed.success).toBe(true);
     });
 
-    it('rejects a call carrying neither, naming both fields', () => {
+    it('rejects a call carrying neither, naming both fields and what to do', () => {
       const parsed = searchPeople.input.safeParse({});
       expect(parsed.success).toBe(false);
-      expect(parsed.error?.issues[0]?.message).toBe('Either jurisdiction or id is required.');
+      expect(parsed.error?.issues[0]?.message).toBe(
+        'Either jurisdiction or id is required. Provide a jurisdiction (state name or OCD-ID) or one or more OCD person IDs via id, or both.',
+      );
     });
 
     /**

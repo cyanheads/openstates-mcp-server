@@ -58,9 +58,18 @@ describe('searchEvents', () => {
    * `required: []`; it is now a schema constraint, so the invalid call is unconstructible.
    */
   describe('jurisdiction is required by the input schema (issue #35)', () => {
-    it('advertises jurisdiction in the JSON Schema required list', () => {
-      const jsonSchema = z.toJSONSchema(searchEvents.input) as { required?: string[] };
-      expect(jsonSchema.required).toContain('jurisdiction');
+    /**
+     * `io: 'input'` reads the schema `tools/list` advertises. The default `'output'` view treats
+     * a defaulted field as always-present, so it lists `page`/`per_page` under `required` — an
+     * artifact no client ever sees.
+     */
+    it('advertises jurisdiction, and only jurisdiction, in the wire required list', () => {
+      const { required = [] } = z.toJSONSchema(searchEvents.input, { io: 'input' }) as {
+        required?: string[];
+      };
+      expect(required).toContain('jurisdiction');
+      expect(required).not.toContain('page');
+      expect(required).not.toContain('per_page');
     });
 
     it('rejects an omitted jurisdiction', () => {

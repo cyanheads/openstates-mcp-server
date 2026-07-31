@@ -3,6 +3,7 @@
  * @module tests/tools/search-bills.tool.test
  */
 
+import { z } from '@cyanheads/mcp-ts-core';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchBills } from '@/mcp-server/tools/definitions/search-bills.tool.js';
@@ -65,11 +66,80 @@ describe('searchBills', () => {
     expect(result.results).toHaveLength(1);
   });
 
-  it('throws missing_scope when neither jurisdiction nor q is provided', async () => {
-    const ctx = createMockContext({ errors: searchBills.errors });
-    const input = searchBills.input.parse({ session: '2025' });
-    await expect(searchBills.handler(input, ctx)).rejects.toMatchObject({
-      data: { reason: 'missing_scope' },
+  /**
+   * A `q`-only search spans all 56 jurisdictions and exceeds the upstream timeout for a common
+   * term, so every call has to name a state or a full-text term. The rule is a cross-field
+   * refinement on the input object rather than a handler guard: `required` takes one field list,
+   * not a choice between two, so a refinement is the only schema-level form of it, and keeping it
+   * there makes the rejection an input-validation error the caller reads as a message — the same
+   * shape `openstates_search_people` uses for `jurisdiction`-or-`id`.
+   */
+  describe('scope is required by the input schema: jurisdiction or q', () => {
+    it('accepts a jurisdiction alone', () => {
+      expect(searchBills.input.safeParse({ jurisdiction: 'wa' }).success).toBe(true);
+    });
+
+    it('accepts a q alone, with no jurisdiction', () => {
+      expect(searchBills.input.safeParse({ q: 'public safety' }).success).toBe(true);
+    });
+
+    it('accepts both together', () => {
+      expect(searchBills.input.safeParse({ jurisdiction: 'wa', q: 'public safety' }).success).toBe(
+        true,
+      );
+    });
+
+    it('rejects a call carrying neither, naming both fields and what to do', () => {
+      const parsed = searchBills.input.safeParse({});
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.issues[0]?.message).toBe(
+        'Either jurisdiction or q is required. Provide a jurisdiction (state name or OCD-ID) or a full-text search term via q, or both.',
+      );
+    });
+
+    /**
+     * The rejection is a validation issue on the object itself, not a thrown handler error — which
+     * is what keeps it an input-validation failure the caller sees before any upstream request.
+     */
+    it('raises the rejection as a schema issue at the object root', () => {
+      const issue = searchBills.input.safeParse({}).error?.issues[0];
+      expect(issue?.code).toBe('custom');
+      expect(issue?.path).toEqual([]);
+    });
+
+    it('rejects a filter-only call — a filter narrows the scope, it does not supply one', () => {
+      expect(searchBills.input.safeParse({ session: '2025' }).success).toBe(false);
+      expect(searchBills.input.safeParse({ sort: 'updated_desc' }).success).toBe(false);
+    });
+
+    /**
+     * `""` is not `undefined`, so it satisfies the refinement — `.min(1)` is what keeps an empty
+     * scope value from reaching the handler and issuing the unscoped upstream query.
+     */
+    it('rejects an empty-string jurisdiction', () => {
+      expect(searchBills.input.safeParse({ jurisdiction: '' }).success).toBe(false);
+    });
+
+    it('rejects an empty-string q', () => {
+      expect(searchBills.input.safeParse({ q: '' }).success).toBe(false);
+    });
+
+    it('declares no missing_scope reason — the schema owns the constraint', () => {
+      expect(searchBills.errors?.map((e) => e.reason)).not.toContain('missing_scope');
+    });
+
+    /**
+     * The cost of the either/or: `required` takes one field list, so neither field can appear in
+     * it once either satisfies the rule. The constraint stays in the schema, but a client reading
+     * only `required` no longer sees it — which is why the tool description states the rule.
+     */
+    it('carries neither field in the JSON Schema required list', () => {
+      const { required = [] } = z.toJSONSchema(searchBills.input, { io: 'input' }) as {
+        required?: string[];
+      };
+      expect(required).not.toContain('jurisdiction');
+      expect(required).not.toContain('q');
+      expect(searchBills.description).toContain('Either jurisdiction or q (full-text) is required');
     });
   });
 

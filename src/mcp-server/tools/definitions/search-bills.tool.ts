@@ -61,79 +61,99 @@ export const searchBills = tool('openstates_search_bills', {
   description:
     'Search state legislative bills across all covered US jurisdictions. Supports full-text search, jurisdiction/session filtering, subject tags, sponsor lookups, and sort order. Either jurisdiction or q (full-text) is required, and pairing them is the reliable form — a q-only search spans all 56 jurisdictions and exceeds the upstream timeout for a common term, though a distinctive one still returns quickly. include=sponsorships,actions returns sponsor and action history inline. sort=latest_action_desc surfaces bills currently moving. openstates_get_jurisdiction with include=legislative_sessions returns valid session identifiers for session filtering.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
-  input: z.object({
-    jurisdiction: z
-      .string()
-      .optional()
-      .describe(
-        'State name, two-letter abbreviation, or OCD-ID (e.g., "Washington", "wa", or "ocd-jurisdiction/country:us/state:wa/government"). Required unless q is provided.',
+  input: z
+    .object({
+      jurisdiction: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          'State name, two-letter abbreviation, or OCD-ID (e.g., "Washington", "wa", or "ocd-jurisdiction/country:us/state:wa/government"). Required unless q is provided.',
+        ),
+      q: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          'Full-text search across bill titles, abstracts, and text. Required unless jurisdiction is provided. Pair it with jurisdiction whenever a state is known — a q-only search over every jurisdiction times out upstream for a common term.',
+        ),
+      session: z
+        .string()
+        .optional()
+        .describe(
+          'Session identifier (e.g., "2025", "2025-2026", "2025rs"). Use openstates_get_jurisdiction with include=legislative_sessions to discover valid values. Omit to search across all sessions.',
+        ),
+      chamber: z
+        .enum(['upper', 'lower'])
+        .optional()
+        .describe('Filter by originating chamber. "upper" = Senate, "lower" = House/Assembly.'),
+      classification: z
+        .string()
+        .optional()
+        .describe('Bill classification: "bill", "resolution", "constitutional amendment", etc.'),
+      subject: z
+        .array(z.string())
+        .optional()
+        .describe('Filter to bills tagged with one or more subject categories.'),
+      sponsor: z.string().optional().describe('Filter by sponsor name or OCD person ID.'),
+      sponsor_classification: z
+        .string()
+        .optional()
+        .describe('Filter sponsor type: "primary", "cosponsor".'),
+      sort: BillSortEnum.default('updated_desc').describe(
+        'Sort order. Use "latest_action_desc" for bills currently moving through the legislature.',
       ),
-    q: z
-      .string()
-      .optional()
-      .describe(
-        'Full-text search across bill titles, abstracts, and text. Required unless jurisdiction is provided. Pair it with jurisdiction whenever a state is known — a q-only search over every jurisdiction times out upstream for a common term.',
-      ),
-    session: z
-      .string()
-      .optional()
-      .describe(
-        'Session identifier (e.g., "2025", "2025-2026", "2025rs"). Use openstates_get_jurisdiction with include=legislative_sessions to discover valid values. Omit to search across all sessions.',
-      ),
-    chamber: z
-      .enum(['upper', 'lower'])
-      .optional()
-      .describe('Filter by originating chamber. "upper" = Senate, "lower" = House/Assembly.'),
-    classification: z
-      .string()
-      .optional()
-      .describe('Bill classification: "bill", "resolution", "constitutional amendment", etc.'),
-    subject: z
-      .array(z.string())
-      .optional()
-      .describe('Filter to bills tagged with one or more subject categories.'),
-    sponsor: z.string().optional().describe('Filter by sponsor name or OCD person ID.'),
-    sponsor_classification: z
-      .string()
-      .optional()
-      .describe('Filter sponsor type: "primary", "cosponsor".'),
-    sort: BillSortEnum.default('updated_desc').describe(
-      'Sort order. Use "latest_action_desc" for bills currently moving through the legislature.',
-    ),
-    action_since: z
-      .string()
-      .regex(isoDateRegex, isoDateMessage)
-      .optional()
-      .describe(
-        'ISO 8601 date — only return bills with an action after this date (e.g., "2025-01-01").',
-      ),
-    updated_since: z
-      .string()
-      .regex(isoDateRegex, isoDateMessage)
-      .optional()
-      .describe('ISO 8601 date — only return bills updated after this date (e.g., "2025-01-01").'),
-    created_since: z
-      .string()
-      .regex(isoDateRegex, isoDateMessage)
-      .optional()
-      .describe(
-        'ISO 8601 date — only return bills first entered in Open States after this date (e.g., "2025-01-01"). Use to find newly-introduced bills, as opposed to recently-updated or recently-acted-on.',
-      ),
-    include: z
-      .array(BillIncludeEnum)
-      .optional()
-      .describe(
-        'Related data to inline. "sponsorships" and "actions" cover most research needs without a separate openstates_get_bill call. "votes" adds full vote tallies and per-legislator positions.',
-      ),
-    page: z.coerce.number().int().min(1).default(1).describe('Page number (1-indexed).'),
-    per_page: z.coerce
-      .number()
-      .int()
-      .min(1)
-      .max(20)
-      .default(10)
-      .describe('Results per page. Maximum 20. Default 10.'),
-  }),
+      action_since: z
+        .string()
+        .regex(isoDateRegex, isoDateMessage)
+        .optional()
+        .describe(
+          'ISO 8601 date — only return bills with an action after this date (e.g., "2025-01-01").',
+        ),
+      updated_since: z
+        .string()
+        .regex(isoDateRegex, isoDateMessage)
+        .optional()
+        .describe(
+          'ISO 8601 date — only return bills updated after this date (e.g., "2025-01-01").',
+        ),
+      created_since: z
+        .string()
+        .regex(isoDateRegex, isoDateMessage)
+        .optional()
+        .describe(
+          'ISO 8601 date — only return bills first entered in Open States after this date (e.g., "2025-01-01"). Use to find newly-introduced bills, as opposed to recently-updated or recently-acted-on.',
+        ),
+      include: z
+        .array(BillIncludeEnum)
+        .optional()
+        .describe(
+          'Related data to inline. "sponsorships" and "actions" cover most research needs without a separate openstates_get_bill call. "votes" adds full vote tallies and per-legislator positions.',
+        ),
+      page: z.coerce.number().int().min(1).default(1).describe('Page number (1-indexed).'),
+      per_page: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(20)
+        .default(10)
+        .describe('Results per page. Maximum 20. Default 10.'),
+    })
+    /**
+     * `jurisdiction` or `q`, the same either/or `openstates_search_people` carries for
+     * `jurisdiction` or `id`. A cross-field refinement is the only schema-level form of that rule
+     * — JSON Schema `required` takes one field list, not a choice between two — and keeping it in
+     * the schema rather than in the handler keeps the rejection an input-validation error, as it
+     * is for every other constraint on this tool. The message carries the recovery guidance
+     * itself, since a refinement populates no `data.recovery` and leaves the caller nothing else
+     * to read. `.min(1)` on both fields is load-bearing under this form: `""` is not `undefined`,
+     * so an empty scope value would satisfy the refinement and issue the unscoped upstream query
+     * the rule exists to prevent.
+     */
+    .refine((input) => input.jurisdiction !== undefined || input.q !== undefined, {
+      message:
+        'Either jurisdiction or q is required. Provide a jurisdiction (state name or OCD-ID) or a full-text search term via q, or both.',
+    }),
   output: z.object({
     results: z
       .array(
@@ -455,13 +475,6 @@ export const searchBills = tool('openstates_search_bills', {
   },
   errors: [
     {
-      reason: 'missing_scope',
-      code: JsonRpcErrorCode.ValidationError,
-      when: 'Neither jurisdiction nor q (full-text search) was provided.',
-      recovery:
-        'Provide a jurisdiction (state name or OCD-ID) or a full-text search term via q, or both.',
-    },
-    {
       reason: 'upstream_timeout',
       code: JsonRpcErrorCode.Timeout,
       when: 'Open States did not answer within the per-request timeout — the query is too broad.',
@@ -478,12 +491,6 @@ export const searchBills = tool('openstates_search_bills', {
   ],
 
   async handler(input, ctx) {
-    if (!input.jurisdiction && !input.q) {
-      throw ctx.fail('missing_scope', 'Either jurisdiction or q is required.', {
-        ...ctx.recoveryFor('missing_scope'),
-      });
-    }
-
     const subject = input.subject?.length ? input.subject : undefined;
 
     const svc = getOpenStatesApiService();

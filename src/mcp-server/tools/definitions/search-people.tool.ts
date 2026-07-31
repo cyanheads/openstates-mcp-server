@@ -78,7 +78,8 @@ export const searchPeople = tool('openstates_search_people', {
      * rejection an input-validation error, as it is for every other constraint on this tool.
      */
     .refine((input) => input.jurisdiction !== undefined || input.id !== undefined, {
-      message: 'Either jurisdiction or id is required.',
+      message:
+        'Either jurisdiction or id is required. Provide a jurisdiction (state name or OCD-ID) or one or more OCD person IDs via id, or both.',
     }),
   output: z.object({
     results: z
