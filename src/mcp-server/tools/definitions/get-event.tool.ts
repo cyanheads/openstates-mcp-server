@@ -259,17 +259,17 @@ export const getEvent = tool('openstates_get_event', {
     if (result.links?.length) {
       lines.push('');
       lines.push('## Links');
-      for (const l of result.links) lines.push(`- ${l.note}: ${l.url}`);
+      for (const l of result.links) lines.push(l.note ? `- ${l.note}: ${l.url}` : `- ${l.url}`);
     }
     if (result.media?.length) {
       lines.push('');
       lines.push('## Media');
-      for (const m of result.media) lines.push(`- ${m.note}: ${m.url}`);
+      for (const m of result.media) lines.push(m.note ? `- ${m.note}: ${m.url}` : `- ${m.url}`);
     }
     if (result.documents?.length) {
       lines.push('');
       lines.push('## Documents');
-      for (const d of result.documents) lines.push(`- ${d.note}: ${d.url}`);
+      for (const d of result.documents) lines.push(d.note ? `- ${d.note}: ${d.url}` : `- ${d.url}`);
     }
     if (result.sources?.length) {
       lines.push('');

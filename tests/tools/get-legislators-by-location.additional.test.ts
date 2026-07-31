@@ -252,3 +252,45 @@ describe('getLegislatorsByLocation — include enrichment surfacing', () => {
     expect(text).toContain('official roster');
   });
 });
+
+/**
+ * Open States frequently returns `note: ""` for a person link. Rendering it as `${note}: ${url}`
+ * unconditionally put a dangling separator in front of the URL on the `content[]` path.
+ * `structuredContent` is unaffected — `""` is the accurate upstream value and stays.
+ */
+describe('getLegislatorsByLocation — link rendering with an empty note', () => {
+  const personWithLinks = {
+    ...mockPerson,
+    links: [
+      { url: 'https://housedemocrats.example.gov/thomas/', note: '' },
+      { url: 'https://leg.example.gov/members/thomas', note: '' },
+    ],
+  };
+
+  it('renders the URL alone when the note is empty', () => {
+    const blocks = getLegislatorsByLocation.format!({ legislators: [personWithLinks] });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain(
+      '**Links:** https://housedemocrats.example.gov/thomas/, https://leg.example.gov/members/thomas',
+    );
+    expect(text).not.toContain(': https://housedemocrats.example.gov/thomas/');
+  });
+
+  it('still labels a link that has a note', () => {
+    const blocks = getLegislatorsByLocation.format!({
+      legislators: [
+        {
+          ...mockPerson,
+          links: [
+            { url: 'https://leg.example.gov/members/thomas', note: 'official page' },
+            { url: 'https://housedemocrats.example.gov/thomas/', note: '' },
+          ],
+        },
+      ],
+    });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain(
+      '**Links:** official page: https://leg.example.gov/members/thomas, https://housedemocrats.example.gov/thomas/',
+    );
+  });
+});

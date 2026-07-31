@@ -229,7 +229,9 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
         }
       }
       if (person.links?.length) {
-        lines.push(`**Links:** ${person.links.map((l) => `${l.note}: ${l.url}`).join(', ')}`);
+        lines.push(
+          `**Links:** ${person.links.map((l) => (l.note ? `${l.note}: ${l.url}` : l.url)).join(', ')}`,
+        );
       }
       if (person.other_names?.length) {
         lines.push('**Other names:**');

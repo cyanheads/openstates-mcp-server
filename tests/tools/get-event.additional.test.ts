@@ -328,3 +328,38 @@ describe('getEvent — participant without upstream role (issue #19)', () => {
     expect(text).not.toContain('undefined');
   });
 });
+
+/**
+ * Links, media, and documents all render one-per-line as `- ${note}: ${url}`. Open States often
+ * supplies an empty `note`, which put a dangling separator in front of every URL on the
+ * `content[]` path. `structuredContent` keeps `note: ""` — it is the accurate upstream value.
+ */
+describe('getEvent — link, media, and document rendering with an empty note', () => {
+  const render = (event: Record<string, unknown>) =>
+    (getEvent.format!({ ...baseEvent, ...event })[0] as { text: string }).text;
+
+  it('renders each URL alone when the note is empty', () => {
+    const text = render({
+      links: [{ url: 'https://leg.example.gov/hearing', note: '' }],
+      media: [{ url: 'https://tvw.example.org/clip', note: '' }],
+      documents: [{ url: 'https://leg.example.gov/agenda.pdf', note: '' }],
+    });
+    expect(text).toContain('- https://leg.example.gov/hearing');
+    expect(text).toContain('- https://tvw.example.org/clip');
+    expect(text).toContain('- https://leg.example.gov/agenda.pdf');
+    expect(text).not.toContain(': https://leg.example.gov/hearing');
+    expect(text).not.toContain(': https://tvw.example.org/clip');
+    expect(text).not.toContain(': https://leg.example.gov/agenda.pdf');
+  });
+
+  it('still labels each list when the note is present', () => {
+    const text = render({
+      links: [{ url: 'https://leg.example.gov/hearing', note: 'hearing notice' }],
+      media: [{ url: 'https://tvw.example.org/clip', note: 'video' }],
+      documents: [{ url: 'https://leg.example.gov/agenda.pdf', note: 'agenda' }],
+    });
+    expect(text).toContain('- hearing notice: https://leg.example.gov/hearing');
+    expect(text).toContain('- video: https://tvw.example.org/clip');
+    expect(text).toContain('- agenda: https://leg.example.gov/agenda.pdf');
+  });
+});

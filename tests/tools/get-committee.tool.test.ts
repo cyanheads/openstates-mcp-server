@@ -152,3 +152,28 @@ describe('getCommittee — include enrichment surfacing (links, sources)', () =>
     expect(text).toContain('official roster');
   });
 });
+
+/**
+ * A committee link with an empty upstream `note` rendered as a dangling `: ` in front of the URL
+ * on the `content[]` path. `structuredContent` keeps `note: ""` — it is the accurate value.
+ */
+describe('getCommittee — link rendering with an empty note', () => {
+  it('renders the URL alone when the note is empty', () => {
+    const blocks = getCommittee.format!({
+      ...mockCommittee,
+      links: [{ url: 'https://committee.example.gov', note: '' }],
+    });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('- https://committee.example.gov');
+    expect(text).not.toContain(': https://committee.example.gov');
+  });
+
+  it('still labels a link that has a note', () => {
+    const blocks = getCommittee.format!({
+      ...mockCommittee,
+      links: [{ url: 'https://committee.example.gov', note: 'homepage' }],
+    });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('- homepage: https://committee.example.gov');
+  });
+});

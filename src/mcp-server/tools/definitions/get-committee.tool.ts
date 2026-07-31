@@ -132,7 +132,7 @@ export const getCommittee = tool('openstates_get_committee', {
       lines.push('');
       lines.push('## Links');
       for (const l of result.links) {
-        lines.push(`- ${l.note}: ${l.url}`);
+        lines.push(l.note ? `- ${l.note}: ${l.url}` : `- ${l.url}`);
       }
     }
     if (result.sources?.length) {
