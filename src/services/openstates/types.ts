@@ -15,6 +15,13 @@ export interface PaginationMeta {
 // --- Compact / embedded sub-types ---
 
 export interface CompactJurisdiction {
+  /**
+   * Jurisdiction type — `"state"` for a state legislature, `"country"` for the federal government.
+   * Optional: it is the level discriminator every embedded jurisdiction carries upstream, but it is
+   * declared optional so a payload that omits it still parses, and so widening this shared shape
+   * adds nothing to the tools whose output schemas do not declare it.
+   */
+  classification?: string;
   id: string;
   name: string;
 }
@@ -108,7 +115,11 @@ export interface Bill {
   latest_action_description: string | null;
   latest_passage_date: string | null;
   openstates_url?: string;
-  other_identifiers?: Array<{ identifier: string; scheme: string }>;
+  /**
+   * Cross-system identifiers. `scheme` is optional: unlike the person entity, Open States omits it
+   * on bill records, so requiring it here would contradict every payload the `/bills` endpoints return.
+   */
+  other_identifiers?: Array<{ identifier: string; scheme?: string }>;
   other_titles?: Array<{ title: string; note: string }>;
   related_bills?: RelatedBill[];
   session: string;

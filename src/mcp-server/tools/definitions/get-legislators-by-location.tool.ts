@@ -1,5 +1,5 @@
 /**
- * @fileoverview Find legislators representing a geographic coordinate.
+ * @fileoverview Find the state legislators and federal delegation representing a geographic coordinate.
  * @module mcp-server/tools/definitions/get-legislators-by-location
  */
 
@@ -15,10 +15,43 @@ const PersonIncludeEnum = z.enum([
   'offices',
 ]);
 
+/**
+ * `jurisdiction.classification` values that separate the two tiers `/people.geo` returns together.
+ * `current_role.org_classification` is `upper`/`lower` for a US Senator exactly as it is for a
+ * state senator, so the chamber field cannot tell them apart and this one is the discriminator.
+ */
+const FEDERAL_CLASSIFICATION = 'country';
+const STATE_CLASSIFICATION = 'state';
+
+/**
+ * How many results serve the given government level. The handler and `format()` derive the tier
+ * counts independently — from the service result and from the parsed output respectively — so they
+ * share this predicate rather than each rolling their own, which is how the two surfaces last
+ * disagreed about the same numbers.
+ */
+function countTier(
+  people: ReadonlyArray<{ jurisdiction: { classification?: string | undefined } }>,
+  level: string,
+): number {
+  return people.filter((p) => p.jurisdiction.classification === level).length;
+}
+
+/**
+ * Human-readable tier for a jurisdiction classification. The two values this endpoint returns get
+ * a plain-language label; anything else is rendered verbatim rather than guessed at or dropped, so
+ * an unfamiliar level still reaches a `content[]`-only client. Undefined when upstream omits it.
+ */
+function tierLabel(classification: string | undefined): string | undefined {
+  if (classification === undefined) return;
+  if (classification === FEDERAL_CLASSIFICATION) return 'federal (US Congress)';
+  if (classification === STATE_CLASSIFICATION) return 'state legislature';
+  return classification;
+}
+
 export const getLegislatorsByLocation = tool('openstates_get_legislators_by_location', {
   title: 'Get Legislators by Location',
   description:
-    'Find all state legislators representing a geographic coordinate. Pass latitude and longitude to get state senators and representatives (and potentially governor/executive officials) for that location. Useful for constituent-to-representative matching, address-based policy research, and electoral boundary analysis. This server does not geocode addresses — the caller must provide decimal-degree coordinates. Use include=offices to get contact information alongside the legislator list.',
+    'Find every legislator representing a geographic coordinate — both tiers. Pass latitude and longitude to get the state senators and representatives for that location (and potentially governor/executive officials), plus the coordinate\'s two US Senators and its US Representative. jurisdiction.classification separates the tiers: "state" is a state legislature, "country" is the US Congress. current_role.org_classification does not — it is "upper"/"lower" for a US Senator exactly as for a state senator. Useful for constituent-to-representative matching, address-based policy research, and electoral boundary analysis. This server does not geocode addresses — the caller must provide decimal-degree coordinates. Use include=offices to get contact information alongside the legislator list.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
     latitude: z.number().describe('Latitude in decimal degrees (e.g., 47.6062 for Seattle, WA).'),
@@ -59,8 +92,16 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
               .object({
                 id: z.string().describe('OCD jurisdiction ID.'),
                 name: z.string().describe('Jurisdiction name.'),
+                classification: z
+                  .string()
+                  .optional()
+                  .describe(
+                    'Government level this legislator serves: "state" for a state legislature, "country" for the US Congress. The field that separates the two tiers in this result set.',
+                  ),
               })
               .describe('Home jurisdiction.'),
+            given_name: z.string().describe('Given (first) name.'),
+            family_name: z.string().describe('Family (last) name.'),
             email: z.string().describe('Email address. Empty string when not available.'),
             openstates_url: z.string().describe('Open States profile URL.'),
             image: z
@@ -133,6 +174,14 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
 
   enrichment: {
     count: z.number().describe('Number of legislators returned for this coordinate.'),
+    stateCount: z
+      .number()
+      .describe('Results serving a state legislature (jurisdiction.classification = "state").'),
+    federalCount: z
+      .number()
+      .describe(
+        'Results serving the US Congress (jurisdiction.classification = "country") — the coordinate\'s two US Senators and its US Representative.',
+      ),
     notice: z
       .string()
       .optional()
@@ -181,13 +230,17 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
       ctx,
     );
 
+    const federalCount = countTier(result.results, FEDERAL_CLASSIFICATION);
+    const stateCount = countTier(result.results, STATE_CLASSIFICATION);
+
     ctx.log.info('Fetched legislators by geo', {
       latitude: input.latitude,
       longitude: input.longitude,
       count: result.results.length,
+      federalCount,
     });
 
-    ctx.enrich({ count: result.results.length });
+    ctx.enrich({ count: result.results.length, stateCount, federalCount });
 
     if (result.results.length === 0) {
       ctx.enrich.notice(
@@ -199,13 +252,29 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
   },
 
   format: (result) => {
-    const lines: string[] = [`**${result.legislators.length} legislators found**`];
+    const stateCount = countTier(result.legislators, STATE_CLASSIFICATION);
+    const federalCount = countTier(result.legislators, FEDERAL_CLASSIFICATION);
+    /**
+     * The breakdown only earns a line when both tiers are present — a coordinate answered entirely
+     * by one tier needs no disambiguation. Each count is its own tally rather than a subtraction
+     * from the total, so a record at neither tier is left out of both here exactly as it is left
+     * out of both in the enrichment, and its own line still carries the level upstream reported.
+     */
+    const breakdown =
+      stateCount > 0 && federalCount > 0
+        ? ` — ${stateCount} state, ${federalCount} federal (US Congress)`
+        : '';
+    const lines: string[] = [`**${result.legislators.length} legislators found**${breakdown}`];
     for (const person of result.legislators) {
+      const tier = tierLabel(person.jurisdiction.classification);
       lines.push('');
       lines.push(`## ${person.name}`);
       lines.push(`**ID:** ${person.id}`);
+      lines.push(`**Given name:** ${person.given_name} | **Family name:** ${person.family_name}`);
       lines.push(`**Party:** ${person.party || 'Not available'}`);
-      lines.push(`**Jurisdiction:** ${person.jurisdiction.name} (${person.jurisdiction.id})`);
+      lines.push(
+        `**Jurisdiction:** ${person.jurisdiction.name} (${person.jurisdiction.id})${tier ? ` — ${tier}` : ''}`,
+      );
       if (person.current_role) {
         const district = person.current_role.district
           ? ` — District ${person.current_role.district}`

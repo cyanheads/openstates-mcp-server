@@ -23,9 +23,36 @@ const mockPerson = {
   jurisdiction: {
     id: 'ocd-jurisdiction/country:us/state:wa/government',
     name: 'Washington',
+    classification: 'state',
   },
+  given_name: 'Jane',
+  family_name: 'Smith',
   email: 'jane.smith@leg.wa.gov',
   openstates_url: 'https://openstates.org/person/jane-smith/',
+};
+
+/**
+ * A US Senator as `/people.geo` returns one alongside the state delegation: `org_classification`
+ * is `upper` exactly as for a state senator, and only `jurisdiction.classification` says federal.
+ */
+const mockFederalPerson = {
+  id: 'ocd-person/fed456',
+  name: 'Maria Cantwell',
+  party: 'Democratic',
+  current_role: {
+    title: 'Senator',
+    org_classification: 'upper',
+    district: 'Washington',
+  },
+  jurisdiction: {
+    id: 'ocd-jurisdiction/country:us/government',
+    name: 'United States',
+    classification: 'country',
+  },
+  given_name: 'Maria',
+  family_name: 'Cantwell',
+  email: '',
+  openstates_url: 'https://openstates.org/person/maria-cantwell/',
 };
 
 describe('getLegislatorsByLocation', () => {
@@ -157,5 +184,157 @@ describe('getLegislatorsByLocation', () => {
     const blocks = getLegislatorsByLocation.format!(result);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('0 legislators found');
+  });
+
+  /**
+   * Regression coverage for issue #36. `/people.geo` returns the coordinate's federal delegation
+   * alongside its state legislators, and nothing in the output said so — `org_classification` is
+   * `upper`/`lower` for both tiers, so an agent asked for state legislators presented members of
+   * Congress as state legislators. `given_name`/`family_name` were populated by the service and
+   * then stripped by this tool's output schema.
+   */
+  describe('federal tier disclosure and name parts (issue #36)', () => {
+    const bothTiers = [mockPerson, mockFederalPerson];
+
+    beforeEach(() => {
+      mockService.getPeopleByGeo.mockResolvedValue({
+        results: bothTiers,
+        pagination: { page: 1, per_page: 2, max_page: 1, total_items: 2 },
+      });
+    });
+
+    const run = async () => {
+      const ctx = createMockContext();
+      const input = getLegislatorsByLocation.input.parse({
+        latitude: 47.6062,
+        longitude: -122.3321,
+      });
+      const structured = getLegislatorsByLocation.output.parse(
+        await getLegislatorsByLocation.handler(input, ctx),
+      );
+      return { ctx, structured };
+    };
+
+    it('keeps jurisdiction.classification through the output schema', async () => {
+      const { structured } = await run();
+      expect(structured.legislators[0]?.jurisdiction.classification).toBe('state');
+      expect(structured.legislators[1]?.jurisdiction.classification).toBe('country');
+    });
+
+    it('counts each tier in the enrichment', async () => {
+      const { ctx } = await run();
+      const enrichment = getEnrichment(ctx);
+      expect(enrichment.count).toBe(2);
+      expect(enrichment.stateCount).toBe(1);
+      expect(enrichment.federalCount).toBe(1);
+    });
+
+    it('labels each legislator tier in the rendered text', async () => {
+      const { structured } = await run();
+      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      expect(text).toContain('**2 legislators found** — 1 state, 1 federal (US Congress)');
+      expect(text).toContain(
+        'Washington (ocd-jurisdiction/country:us/state:wa/government) — state legislature',
+      );
+      expect(text).toContain(
+        'United States (ocd-jurisdiction/country:us/government) — federal (US Congress)',
+      );
+    });
+
+    it('keeps given_name and family_name through the output schema and the rendered text', async () => {
+      const { structured } = await run();
+      expect(structured.legislators[0]?.given_name).toBe('Jane');
+      expect(structured.legislators[0]?.family_name).toBe('Smith');
+      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      expect(text).toContain('**Given name:** Maria | **Family name:** Cantwell');
+    });
+
+    it('omits the tier breakdown when every result is state-level', async () => {
+      mockService.getPeopleByGeo.mockResolvedValue({
+        results: [mockPerson],
+        pagination: { page: 1, per_page: 1, max_page: 1, total_items: 1 },
+      });
+      const { ctx, structured } = await run();
+      expect(getEnrichment(ctx).federalCount).toBe(0);
+      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      expect(text).toContain('**1 legislators found**\n');
+      expect(text).not.toContain('federal');
+    });
+
+    /**
+     * A level neither tier constant covers is rendered verbatim rather than dropped, so a
+     * content[]-only client still sees what upstream reported. It counts toward neither tier.
+     */
+    it('renders an unrecognized classification verbatim', async () => {
+      mockService.getPeopleByGeo.mockResolvedValue({
+        results: [
+          {
+            ...mockPerson,
+            jurisdiction: {
+              id: 'ocd-jurisdiction/country:us/state:wa/place:seattle/government',
+              name: 'Seattle',
+              classification: 'municipality',
+            },
+          },
+        ],
+        pagination: { page: 1, per_page: 1, max_page: 1, total_items: 1 },
+      });
+      const { ctx, structured } = await run();
+      expect(getEnrichment(ctx).stateCount).toBe(0);
+      expect(getEnrichment(ctx).federalCount).toBe(0);
+      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      expect(text).toContain(
+        'Seattle (ocd-jurisdiction/country:us/state:wa/place:seattle/government) — municipality',
+      );
+    });
+
+    /** A payload without the discriminator is not labelled or counted — never guessed at. */
+    it('leaves a result with no jurisdiction classification unlabelled and uncounted', async () => {
+      mockService.getPeopleByGeo.mockResolvedValue({
+        results: [{ ...mockPerson, jurisdiction: { id: 'ocd-jurisdiction/x', name: 'Somewhere' } }],
+        pagination: { page: 1, per_page: 1, max_page: 1, total_items: 1 },
+      });
+      const { ctx, structured } = await run();
+      const enrichment = getEnrichment(ctx);
+      expect(enrichment.count).toBe(1);
+      expect(enrichment.stateCount).toBe(0);
+      expect(enrichment.federalCount).toBe(0);
+      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      expect(text).toContain('**Jurisdiction:** Somewhere (ocd-jurisdiction/x)\n');
+      expect(text).not.toContain('legislature');
+    });
+
+    /**
+     * The header split and the enrichment counts must agree. Tallying each tier by its own
+     * predicate is what keeps them aligned — deriving the state count by subtracting the federal
+     * one from the total silently folds a record at neither tier into the state side, so the two
+     * surfaces report different numbers for the same result set.
+     */
+    it('keeps the header split equal to the enrichment counts when a result sits at neither tier', async () => {
+      mockService.getPeopleByGeo.mockResolvedValue({
+        results: [
+          mockPerson,
+          mockFederalPerson,
+          {
+            ...mockPerson,
+            id: 'ocd-person/muni789',
+            jurisdiction: {
+              id: 'ocd-jurisdiction/country:us/state:wa/place:seattle/government',
+              name: 'Seattle',
+              classification: 'municipality',
+            },
+          },
+        ],
+        pagination: { page: 1, per_page: 3, max_page: 1, total_items: 3 },
+      });
+      const { ctx, structured } = await run();
+      const enrichment = getEnrichment(ctx);
+      expect(enrichment).toMatchObject({ count: 3, stateCount: 1, federalCount: 1 });
+      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      expect(text).toContain('**3 legislators found** — 1 state, 1 federal (US Congress)');
+      expect(text).toContain(
+        'Seattle (ocd-jurisdiction/country:us/state:wa/place:seattle/government) — municipality',
+      );
+    });
   });
 });

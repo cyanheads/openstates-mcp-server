@@ -45,6 +45,8 @@ await createApp({
     'Open States MCP server — US state legislative data for all 50 states, DC, and 5 US territories.\n' +
     '- Use openstates_list_jurisdictions or openstates_get_jurisdiction (include=legislative_sessions) to discover valid session identifiers before filtering bill searches.\n' +
     '- Either jurisdiction or q is required for openstates_search_bills.\n' +
+    '- jurisdiction is required for openstates_search_people, openstates_search_committees, and openstates_search_events — the schema rejects a call that omits it.\n' +
+    '- openstates_get_legislators_by_location returns a coordinate\'s US Senators and Representative alongside its state legislators; jurisdiction.classification ("state" vs "country") separates the two tiers.\n' +
     '- Committee and event tools are experimental — not all states have coverage.\n' +
     '- Use include parameter on search and get tools to request related data inline and avoid N+1 follow-up calls.',
   landing: { requireAuth: false },
