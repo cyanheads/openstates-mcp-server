@@ -3,6 +3,7 @@
  * @module tests/tools/search-committees.tool.test
  */
 
+import { z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,20 +49,30 @@ describe('searchCommittees', () => {
   /**
    * `GET /committees` with no jurisdiction returned `200 {"total_items": 0}` when the previous
    * description was written; upstream no longer answers it at all — it sits on the gateway for
-   * its full ~60s window and returns 504. Guard before the request so the agent gets a typed
-   * reason and a recovery hint instead of a timeout, and so the stale empty-result promise is
-   * never restated.
+   * its full ~60s window and returns 504. The requirement used to live only in the handler, which
+   * left `tools/list` advertising `required: []`; it is now a schema constraint.
    */
-  it('throws jurisdiction_required when jurisdiction is omitted, without calling the service', async () => {
-    const ctx = createMockContext({ errors: searchCommittees.errors });
-    const input = searchCommittees.input.parse({});
-    await expect(searchCommittees.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'jurisdiction_required',
-        recovery: { hint: expect.stringContaining('openstates_list_jurisdictions') },
-      },
+  describe('jurisdiction is required by the input schema (issue #35)', () => {
+    it('advertises jurisdiction in the JSON Schema required list', () => {
+      const jsonSchema = z.toJSONSchema(searchCommittees.input) as { required?: string[] };
+      expect(jsonSchema.required).toContain('jurisdiction');
     });
-    expect(mockService.searchCommittees).not.toHaveBeenCalled();
+
+    it('rejects an omitted jurisdiction', () => {
+      expect(searchCommittees.input.safeParse({}).success).toBe(false);
+    });
+
+    it('rejects a chamber-only request — a chamber does not scope the all-states query', () => {
+      expect(searchCommittees.input.safeParse({ chamber: 'upper' }).success).toBe(false);
+    });
+
+    it('rejects an empty-string jurisdiction', () => {
+      expect(searchCommittees.input.safeParse({ jurisdiction: '' }).success).toBe(false);
+    });
+
+    it('no longer declares a jurisdiction_required reason — the schema owns the constraint', () => {
+      expect(searchCommittees.errors?.map((e) => e.reason)).not.toContain('jurisdiction_required');
+    });
   });
 
   it('still issues the request when only a chamber accompanies the jurisdiction', async () => {

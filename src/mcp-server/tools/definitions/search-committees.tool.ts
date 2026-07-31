@@ -17,9 +17,9 @@ export const searchCommittees = tool('openstates_search_committees', {
   input: z.object({
     jurisdiction: z
       .string()
-      .optional()
+      .min(1)
       .describe(
-        'State name, abbreviation, or OCD-ID. Required — an all-states request exceeds the upstream timeout, so omitting it is rejected before any request is issued.',
+        'State name, abbreviation, or OCD-ID. Required — an all-states request exceeds the upstream timeout, so every call must be scoped to a single jurisdiction.',
       ),
     classification: z
       .enum(['committee', 'subcommittee'])
@@ -141,13 +141,6 @@ export const searchCommittees = tool('openstates_search_committees', {
   },
   errors: [
     {
-      reason: 'jurisdiction_required',
-      code: JsonRpcErrorCode.ValidationError,
-      when: 'jurisdiction was omitted — an all-states committee request exceeds the upstream timeout.',
-      recovery:
-        'Provide a jurisdiction (state name, abbreviation, or OCD-ID); openstates_list_jurisdictions lists every valid value.',
-    },
-    {
       reason: 'upstream_timeout',
       code: JsonRpcErrorCode.Timeout,
       when: 'Open States did not answer within the per-request timeout — the query is too broad.',
@@ -164,14 +157,6 @@ export const searchCommittees = tool('openstates_search_committees', {
   ],
 
   async handler(input, ctx) {
-    if (!input.jurisdiction) {
-      throw ctx.fail(
-        'jurisdiction_required',
-        'jurisdiction is required for openstates_search_committees.',
-        { ...ctx.recoveryFor('jurisdiction_required') },
-      );
-    }
-
     const svc = getOpenStatesApiService();
     const result = await svc
       .searchCommittees(

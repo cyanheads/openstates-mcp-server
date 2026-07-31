@@ -3,6 +3,7 @@
  * @module tests/tools/search-people.tool.test
  */
 
+import { z } from '@cyanheads/mcp-ts-core';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchPeople } from '@/mcp-server/tools/definitions/search-people.tool.js';
@@ -56,29 +57,31 @@ describe('searchPeople', () => {
 
   /**
    * `GET /people` with no jurisdiction — and `GET /people?name=…` alone — sits on the upstream
-   * gateway for its full ~60s window and answers 504, so the all-states mode the description
-   * used to advertise cannot complete. Guard before the request so the agent gets a typed reason
-   * and a recovery hint naming openstates_list_jurisdictions, not a timeout minutes later.
+   * gateway for its full ~60s window and answers 504, so an unscoped search cannot complete. The
+   * requirement used to live only in the handler, which left `tools/list` advertising
+   * `required: []`; it is now a schema constraint, so the invalid call is unconstructible.
    */
-  it('throws jurisdiction_required when jurisdiction is omitted, without calling the service', async () => {
-    const ctx = createMockContext({ errors: searchPeople.errors });
-    const input = searchPeople.input.parse({});
-    await expect(searchPeople.handler(input, ctx)).rejects.toMatchObject({
-      data: { reason: 'jurisdiction_required' },
+  describe('jurisdiction is required by the input schema (issue #35)', () => {
+    it('advertises jurisdiction in the JSON Schema required list', () => {
+      const jsonSchema = z.toJSONSchema(searchPeople.input) as { required?: string[] };
+      expect(jsonSchema.required).toContain('jurisdiction');
     });
-    expect(mockService.searchPeople).not.toHaveBeenCalled();
-  });
 
-  it('rejects a name-only search — a name does not scope the all-states query', async () => {
-    const ctx = createMockContext({ errors: searchPeople.errors });
-    const input = searchPeople.input.parse({ name: 'Ferguson' });
-    await expect(searchPeople.handler(input, ctx)).rejects.toMatchObject({
-      data: {
-        reason: 'jurisdiction_required',
-        recovery: { hint: expect.stringContaining('openstates_list_jurisdictions') },
-      },
+    it('rejects an omitted jurisdiction', () => {
+      expect(searchPeople.input.safeParse({}).success).toBe(false);
     });
-    expect(mockService.searchPeople).not.toHaveBeenCalled();
+
+    it('rejects a name-only search — a name does not scope the all-states query', () => {
+      expect(searchPeople.input.safeParse({ name: 'Ferguson' }).success).toBe(false);
+    });
+
+    it('rejects an empty-string jurisdiction', () => {
+      expect(searchPeople.input.safeParse({ jurisdiction: '' }).success).toBe(false);
+    });
+
+    it('no longer declares a jurisdiction_required reason — the schema owns the constraint', () => {
+      expect(searchPeople.errors?.map((e) => e.reason)).not.toContain('jurisdiction_required');
+    });
   });
 
   it('returns results for name search', async () => {

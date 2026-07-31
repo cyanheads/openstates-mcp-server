@@ -23,9 +23,9 @@ export const searchPeople = tool('openstates_search_people', {
   input: z.object({
     jurisdiction: z
       .string()
-      .optional()
+      .min(1)
       .describe(
-        'State name, abbreviation, or OCD-ID. Required — an all-states search exceeds the upstream timeout, so omitting it is rejected before any request is issued.',
+        'State name, abbreviation, or OCD-ID. Required — an all-states search exceeds the upstream timeout, so every call must be scoped to a single jurisdiction.',
       ),
     name: z
       .string()
@@ -200,13 +200,6 @@ export const searchPeople = tool('openstates_search_people', {
   },
   errors: [
     {
-      reason: 'jurisdiction_required',
-      code: JsonRpcErrorCode.ValidationError,
-      when: 'jurisdiction was omitted — an all-states people search exceeds the upstream timeout.',
-      recovery:
-        'Provide a jurisdiction (state name, abbreviation, or OCD-ID); openstates_list_jurisdictions lists every valid value, and openstates_get_legislators_by_location resolves coordinates to legislators when no state is known.',
-    },
-    {
       reason: 'upstream_timeout',
       code: JsonRpcErrorCode.Timeout,
       when: 'Open States did not answer within the per-request timeout — the query is too broad.',
@@ -223,14 +216,6 @@ export const searchPeople = tool('openstates_search_people', {
   ],
 
   async handler(input, ctx) {
-    if (!input.jurisdiction) {
-      throw ctx.fail(
-        'jurisdiction_required',
-        'jurisdiction is required for openstates_search_people.',
-        { ...ctx.recoveryFor('jurisdiction_required') },
-      );
-    }
-
     const svc = getOpenStatesApiService();
     const result = await svc
       .searchPeople(
@@ -275,8 +260,7 @@ export const searchPeople = tool('openstates_search_people', {
     });
 
     if (result.results.length === 0) {
-      const filters: string[] = [];
-      if (input.jurisdiction) filters.push(`jurisdiction="${input.jurisdiction}"`);
+      const filters: string[] = [`jurisdiction="${input.jurisdiction}"`];
       if (input.name) filters.push(`name="${input.name}"`);
       if (input.org_classification)
         filters.push(`org_classification="${input.org_classification}"`);

@@ -3,6 +3,7 @@
  * @module tests/tools/search-events.tool.test
  */
 
+import { z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -51,17 +52,31 @@ describe('searchEvents', () => {
 
   /**
    * The Open States /events endpoint requires jurisdiction and answers
-   * `400 must provide 'jurisdiction' parameter` without it — there is no
-   * all-states event search. Guard locally so the agent gets a typed reason and
-   * a recovery hint instead of a generic upstream 400.
+   * `400 must provide 'jurisdiction' parameter` without it — there is no all-states event search.
+   * The requirement used to live only in the handler, which left `tools/list` advertising
+   * `required: []`; it is now a schema constraint, so the invalid call is unconstructible.
    */
-  it('throws jurisdiction_required when jurisdiction is omitted, without calling the service', async () => {
-    const ctx = createMockContext({ errors: searchEvents.errors });
-    const input = searchEvents.input.parse({});
-    await expect(searchEvents.handler(input, ctx)).rejects.toMatchObject({
-      data: { reason: 'jurisdiction_required' },
+  describe('jurisdiction is required by the input schema (issue #35)', () => {
+    it('advertises jurisdiction in the JSON Schema required list', () => {
+      const jsonSchema = z.toJSONSchema(searchEvents.input) as { required?: string[] };
+      expect(jsonSchema.required).toContain('jurisdiction');
     });
-    expect(mockService.searchEvents).not.toHaveBeenCalled();
+
+    it('rejects an omitted jurisdiction', () => {
+      expect(searchEvents.input.safeParse({}).success).toBe(false);
+    });
+
+    it('rejects a date-range-only search — a date range does not scope the query', () => {
+      expect(searchEvents.input.safeParse({ after: '2025-03-01' }).success).toBe(false);
+    });
+
+    it('rejects an empty-string jurisdiction', () => {
+      expect(searchEvents.input.safeParse({ jurisdiction: '' }).success).toBe(false);
+    });
+
+    it('no longer declares a jurisdiction_required reason — the schema owns the constraint', () => {
+      expect(searchEvents.errors?.map((e) => e.reason)).not.toContain('jurisdiction_required');
+    });
   });
 
   it('returns empty results with enrichment notice on experimental coverage', async () => {

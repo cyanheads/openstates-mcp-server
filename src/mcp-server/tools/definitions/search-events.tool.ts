@@ -24,14 +24,14 @@ const isoDateMessage =
 export const searchEvents = tool('openstates_search_events', {
   title: 'Search Events',
   description:
-    'Search hearings, floor sessions, and committee meetings. Experimental — most states do not publish event data to Open States. Use after and before to scope to a date range. Set require_bills=true to filter to events with bills on the agenda, which is the most useful filter for tracking legislation through committee. Use include=agenda,participants for full meeting context. Empty results often indicate the state lacks event data rather than no events occurring.',
+    'Search hearings, floor sessions, and committee meetings. jurisdiction is required — the Open States events endpoint has no all-states search, so scope every call to a single state; use openstates_list_jurisdictions to pick one. Experimental — most states do not publish event data to Open States. Use after and before to scope to a date range. Set require_bills=true to filter to events with bills on the agenda, which is the most useful filter for tracking legislation through committee. Use include=agenda,participants for full meeting context. Empty results often indicate the state lacks event data rather than no events occurring.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
     jurisdiction: z
       .string()
-      .optional()
+      .min(1)
       .describe(
-        'State name, abbreviation, or OCD-ID. Required — the Open States events endpoint has no all-states search and rejects requests that omit it.',
+        'State name, abbreviation, or OCD-ID. Required — the Open States events endpoint has no all-states search, so every call must be scoped to a single jurisdiction.',
       ),
     after: z
       .string()
@@ -228,13 +228,6 @@ export const searchEvents = tool('openstates_search_events', {
   },
   errors: [
     {
-      reason: 'jurisdiction_required',
-      code: JsonRpcErrorCode.ValidationError,
-      when: 'jurisdiction was omitted — the Open States events endpoint requires it.',
-      recovery:
-        'Provide a jurisdiction (state name, abbreviation, or OCD-ID); the events endpoint has no all-states search.',
-    },
-    {
       reason: 'upstream_timeout',
       code: JsonRpcErrorCode.Timeout,
       when: 'Open States did not answer within the per-request timeout — the query is too broad.',
@@ -251,16 +244,6 @@ export const searchEvents = tool('openstates_search_events', {
   ],
 
   async handler(input, ctx) {
-    if (!input.jurisdiction) {
-      throw ctx.fail(
-        'jurisdiction_required',
-        'jurisdiction is required for openstates_search_events.',
-        {
-          ...ctx.recoveryFor('jurisdiction_required'),
-        },
-      );
-    }
-
     const svc = getOpenStatesApiService();
     const result = await svc
       .searchEvents(
