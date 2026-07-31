@@ -205,6 +205,63 @@ const FETCH_BACKSTOP_MULTIPLIER = 2;
 const EXPECTED_UPSTREAM_STATUSES = [429, 504];
 
 /**
+ * Which clock ran out on a request, when one did. The two are separately observable and carry
+ * different remedies, so they are never collapsed: `deadline` is one attempt exceeding
+ * `requestTimeoutMs`, `budget` is the whole call — every attempt plus the backoff between them —
+ * exceeding `totalRequestBudgetMs`.
+ */
+type TimeoutSource = 'deadline' | 'budget';
+
+/**
+ * Ceiling on the upstream text carried into a client-visible message. Long enough for any bound
+ * Open States states; short enough that a rewritten message stays one readable sentence.
+ */
+const MAX_DETAIL_LENGTH = 200;
+
+/**
+ * Reads the constraint Open States names when it rejects a request. Every 4xx answers with
+ * `{"detail": "invalid page, must be in [1, 1]"}` — the exact bound violated, and the only part of
+ * the response worth showing the caller. `fetchWithTimeout` captures that body into
+ * `error.data.body` but no one reads it, so the caller otherwise sees a bare status line.
+ *
+ * The value is upstream-controlled text bound for a message the framework renders above its own
+ * `Recovery:` line, so it is flattened to a single line and clamped: a `detail` carrying newlines
+ * could otherwise write a second, forged recovery hint into what the caller reads.
+ *
+ * Returns `undefined` for anything else: a body truncated mid-JSON at the helper's 500-byte cap, an
+ * HTML gateway page, or FastAPI's array-shaped `detail`. Those pass through with the default
+ * message rather than being paraphrased into something this client cannot vouch for.
+ */
+function upstreamDetail(body: unknown): string | undefined {
+  if (typeof body !== 'string' || body.trim() === '') return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return;
+  const detail = (parsed as Record<string, unknown>)['detail'];
+  if (typeof detail !== 'string') return;
+  const flattened = detail.replace(/\s+/gu, ' ').trim();
+  if (flattened === '') return;
+  return flattened.length > MAX_DETAIL_LENGTH
+    ? `${flattened.slice(0, MAX_DETAIL_LENGTH)}…`
+    : flattened;
+}
+
+/**
+ * `origin + pathname` of a request URL, for the error payloads and log lines a client can see.
+ * Drops the query string the same way the framework redacts the URLs it puts in fetch errors —
+ * nothing in the query is needed to act on a failure, and a base URL configured with credentials
+ * would otherwise ride out with it.
+ */
+function redactedUrl(url: string): string {
+  const { origin, pathname } = new URL(url);
+  return `${origin}${pathname}`;
+}
+
+/**
  * Log bindings for `fetchWithTimeout`. The handler-facing `Context` carries no index signature,
  * so it is not assignable to the open `RequestContext` bag the helper takes — project the
  * correlation fields explicitly rather than casting.
@@ -259,6 +316,8 @@ export class OpenStatesApiService {
   private readonly rateLimiter: RateLimiter;
   /** Per-attempt upstream deadline, from `OPENSTATES_REQUEST_TIMEOUT_MS`. */
   private readonly requestTimeoutMs: number;
+  /** Wall-clock ceiling across every attempt of one call, from `OPENSTATES_TOTAL_REQUEST_BUDGET_MS`. */
+  private readonly totalRequestBudgetMs: number;
 
   /**
    * @param dailyRequestBudget - Fail-fast daily request budget for the shared API key. Defaults to
@@ -275,6 +334,7 @@ export class OpenStatesApiService {
     this.baseUrl = serverConfig.apiBaseUrl.replace(/\/$/, '');
     this.apiKey = serverConfig.apiKey;
     this.requestTimeoutMs = serverConfig.requestTimeoutMs;
+    this.totalRequestBudgetMs = serverConfig.totalRequestBudgetMs;
     this.rateLimiter = new RateLimiter(appConfig, logger);
     this.rateLimiter.configure({
       maxRequests: dailyRequestBudget,
@@ -308,32 +368,62 @@ export class OpenStatesApiService {
       return cached;
     }
 
-    const result = await withRetry(
-      async () => {
-        // Fail-fast daily-budget guard, inside the retry boundary so every real upstream attempt
-        // counts and a rejection costs zero requests (it throws before fetch). Reached only on a
-        // cache miss, so cache hits never consume the budget.
-        this.checkRateBudget();
-
-        const response = await this.fetchAttempt(url, ctx);
-        const text = await response.text();
-        // HTML from a JSON API is a block / rate-limit page, not a recoverable transient — fail
-        // fast so withRetry doesn't retry the block page four times.
-        if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
-          throw serviceUnavailable(
-            'Open States API returned HTML instead of JSON — likely rate-limited or unavailable.',
-            { url, retryable: false },
-          );
-        }
-
-        return JSON.parse(text) as T;
-      },
-      {
-        operation: 'OpenStatesApiService.fetchJson',
-        baseDelayMs: 1500,
-        signal: ctx.signal,
-      },
+    // One budget per call, armed before the first attempt. The per-attempt deadline bounds a
+    // single request; nothing bounded the ladder of them, so a slow-but-retryable upstream (a
+    // 502/503 that takes the full deadline to arrive) could hold the caller for every attempt plus
+    // the backoff between them. Threading this signal into both `withRetry` and each attempt caps
+    // the whole call: `withRetry` stops starting new attempts, and the composed per-attempt signal
+    // preempts one already in flight.
+    const budget = new AbortController();
+    const budgetTimer = setTimeout(
+      () =>
+        budget.abort(
+          new DOMException(
+            `Open States did not answer within ${this.totalRequestBudgetMs}ms across all attempts.`,
+            'AbortError',
+          ),
+        ),
+      this.totalRequestBudgetMs,
     );
+
+    let result: T;
+    try {
+      result = await withRetry(
+        async () => {
+          // Fail-fast daily-budget guard, inside the retry boundary so every real upstream attempt
+          // counts and a rejection costs zero requests (it throws before fetch). Reached only on a
+          // cache miss, so cache hits never consume the budget.
+          this.checkRateBudget();
+
+          const response = await this.fetchAttempt(url, ctx, budget.signal);
+          const text = await response.text();
+          // HTML from a JSON API is a block / rate-limit page, not a recoverable transient — fail
+          // fast so withRetry doesn't retry the block page four times.
+          if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
+            throw serviceUnavailable(
+              'Open States API returned HTML instead of JSON — likely rate-limited or unavailable.',
+              { url: redactedUrl(url), retryable: false },
+            );
+          }
+
+          return JSON.parse(text) as T;
+        },
+        {
+          operation: 'OpenStatesApiService.fetchJson',
+          baseDelayMs: 1500,
+          signal: AbortSignal.any([ctx.signal, budget.signal]),
+        },
+      );
+    } catch (err) {
+      // Only a budget expiry needs classifying here; every other failure arrives already
+      // classified by `fetchAttempt`. A budget expiry lands on one of two paths: mid-flight, the
+      // attempt itself rejects and is classified there, which the classifier recognizes and leaves
+      // alone; mid-backoff, `withRetry`'s sleep rejects with the raw abort reason and never passes
+      // through that classifier at all, so it is normalized here.
+      throw budget.signal.aborted ? this.classifyUpstreamFailure(err, url, ctx, 'budget') : err;
+    } finally {
+      clearTimeout(budgetTimer);
+    }
 
     // Only a successful 2xx JSON response reaches here — every error path threw above, so nothing
     // but a good response is ever cached.
@@ -342,14 +432,20 @@ export class OpenStatesApiService {
   }
 
   /**
-   * One upstream attempt, bounded by a deadline this service owns rather than the helper's.
+   * One upstream attempt, bounded by a deadline this service owns rather than the helper's, and by
+   * the caller-wide budget armed in `fetchJson`.
    *
-   * The deadline signal is composed with `ctx.signal` so either can cancel the request, but it
-   * stays separately observable — `deadline.signal.aborted` distinguishes "this client ran out of
-   * patience" from "the caller went away", which the composed signal alone cannot, and which the
-   * error the helper produces does not reliably encode (see `FETCH_BACKSTOP_MULTIPLIER`).
+   * Both signals are composed with `ctx.signal` so any of the three can cancel the request, but
+   * each stays separately observable — `deadline.signal.aborted` and `budgetSignal.aborted`
+   * distinguish "this client ran out of patience" (and which clock ran out) from "the caller went
+   * away", which the composed signal alone cannot, and which the error the helper produces does not
+   * reliably encode (see `FETCH_BACKSTOP_MULTIPLIER`).
    */
-  private async fetchAttempt(url: string, ctx: Context): Promise<Response> {
+  private async fetchAttempt(
+    url: string,
+    ctx: Context,
+    budgetSignal: AbortSignal,
+  ): Promise<Response> {
     const deadline = new AbortController();
     // `AbortError`, not `TimeoutError`: from the helper's side this is a caller abort — it
     // identity-matches only the reason its own timer raises — and naming it a timeout would have
@@ -375,12 +471,19 @@ export class OpenStatesApiService {
             'X-API-KEY': this.apiKey,
             Accept: 'application/json',
           },
-          signal: AbortSignal.any([deadline.signal, ctx.signal]),
+          signal: AbortSignal.any([deadline.signal, budgetSignal, ctx.signal]),
           expectedStatuses: EXPECTED_UPSTREAM_STATUSES,
         },
       );
     } catch (err) {
-      throw this.classifyUpstreamFailure(err, url, ctx, deadline.signal.aborted);
+      // Deadline first: when both have fired, the per-attempt ceiling is the tighter, more
+      // specific fact about this request.
+      const expiry = deadline.signal.aborted
+        ? 'deadline'
+        : budgetSignal.aborted
+          ? 'budget'
+          : undefined;
+      throw this.classifyUpstreamFailure(err, url, ctx, expiry);
     } finally {
       clearTimeout(timer);
     }
@@ -390,16 +493,21 @@ export class OpenStatesApiService {
    * Re-stamps the upstream failures this service treats as deterministic so `withRetry` fails fast
    * instead of spending attempts — and shared-key budget — on requests that cannot succeed.
    *
-   * - **Timeout.** Either this client's own deadline expiring (`deadlineExpired`, the arm that
-   *   fires in practice — upstream takes ~60s to answer `504`, so the deadline lands first) or an
-   *   upstream status that maps to `Timeout` (`504`, `408`, `425`). Retrying either just pays the
-   *   same wait again: whatever made the request exceed the ceiling — an over-broad query, a slow
-   *   gateway — still holds on the next attempt, and the shared-key budget is spent for nothing.
-   *   Carries the `upstream_timeout` reason plus the calling definition's recovery hint, which
-   *   names the narrowing the caller can act on. Keying on the owned signal first rather than on
-   *   the code keeps this correct however the helper classifies an abort.
+   * - **Timeout.** One of this client's own clocks expiring (`expiry` — the arm that fires in
+   *   practice, since upstream takes ~60s to answer `504` and the per-attempt deadline lands
+   *   first) or an upstream status that maps to `Timeout` (`504`, `408`, `425`). Retrying any of
+   *   them just pays the same wait again: whatever made the request exceed the ceiling — an
+   *   over-broad query, a slow gateway — still holds on the next attempt, and the shared-key
+   *   budget is spent for nothing. Both clocks carry the one `upstream_timeout` reason: the caller
+   *   experiences them identically (the server gave up waiting) and acts on the same narrowing
+   *   hint, so they differ only in the message's stated ceiling. Keying on an owned signal first
+   *   rather than on the code keeps this correct however the helper classifies an abort.
    * - **RateLimited.** The shared key's cap: deterministic until the window rolls, so retrying
    *   only burns the remaining budget against a capped endpoint.
+   * - **Rejected request.** Open States names the violated constraint in a `detail` field
+   *   (`invalid page, must be in [1, 1]`); the classification is already right, so only the
+   *   message is rewritten to carry it. The status keeps its own code, which is what lets a tool
+   *   map a `NotFound` to its own declared reason.
    *
    * Everything else passes through with its default classification, so a genuinely transient
    * `502`/`503` still gets its retries.
@@ -408,24 +516,31 @@ export class OpenStatesApiService {
     err: unknown,
     url: string,
     ctx: Context,
-    deadlineExpired: boolean,
+    expiry: TimeoutSource | undefined,
   ): unknown {
     const mcpError = err instanceof McpError ? err : undefined;
+
+    // Already normalized by an inner call — a mid-flight expiry classified in `fetchAttempt` and
+    // rethrown unchanged by `withRetry`. Re-wrapping would restate the wrong ceiling.
+    if (mcpError?.data?.['reason'] === 'upstream_timeout') return mcpError;
+
     const rawStatus = mcpError?.data?.['status'];
     const status = typeof rawStatus === 'number' ? rawStatus : undefined;
 
-    if (deadlineExpired || mcpError?.code === JsonRpcErrorCode.Timeout) {
+    if (expiry !== undefined || mcpError?.code === JsonRpcErrorCode.Timeout) {
       const cause =
-        status === undefined
-          ? `did not respond within ${this.requestTimeoutMs / 1000}s`
-          : `returned HTTP ${status}`;
+        expiry === 'budget'
+          ? `did not answer within ${this.totalRequestBudgetMs / 1000}s across all attempts`
+          : status === undefined
+            ? `did not respond within ${this.requestTimeoutMs / 1000}s`
+            : `returned HTTP ${status}`;
       return timeout(
         // States only what was observed. Query breadth is the usual cause but not a fact this
         // client can establish — upstream is also slow for well-scoped queries at times — so the
         // narrowing advice belongs in the recovery hint, not in an assertion about the query.
         `Open States ${cause}.`,
         {
-          url,
+          url: redactedUrl(url),
           ...(status === undefined ? {} : { status }),
           reason: 'upstream_timeout',
           retryable: false,
@@ -438,9 +553,26 @@ export class OpenStatesApiService {
     if (mcpError?.code === JsonRpcErrorCode.RateLimited) {
       return rateLimited(
         mcpError.message,
-        { ...mcpError.data, url, retryable: false },
+        { ...mcpError.data, url: redactedUrl(url), retryable: false },
         { cause: mcpError },
       );
+    }
+
+    // The default message is the transport's ("Fetch failed for <url>. Status: 404"), which reads
+    // like the endpoint is missing. Swap in what Open States actually said. Scoped to 4xx: a 5xx
+    // body is a gateway page with nothing to name, and rewriting it would only hide the status.
+    if (mcpError && status !== undefined && status >= 400 && status < 500) {
+      const detail = upstreamDetail(mcpError.data?.['body']);
+      if (detail !== undefined) {
+        // Some details are already sentences ("...for your API key."), others are bare clauses.
+        const sentence = /[.!?]$/.test(detail) ? detail : `${detail}.`;
+        return new McpError(
+          mcpError.code,
+          `Open States rejected the request: ${sentence}`,
+          { ...mcpError.data, url: redactedUrl(url) },
+          { cause: mcpError },
+        );
+      }
     }
 
     return err;
@@ -483,7 +615,12 @@ export class OpenStatesApiService {
       per_page: params.per_page ?? 10,
     };
     const url = this.buildUrl('/bills', queryParams);
-    ctx.log.debug('Searching bills', { url: url.replace(this.apiKey, '[redacted]') });
+    ctx.log.debug('Searching bills', {
+      jurisdiction: params.jurisdiction,
+      q: params.q,
+      session: params.session,
+      page: params.page ?? 1,
+    });
     return this.fetchJson<BillListResponse>(url, ctx);
   }
 

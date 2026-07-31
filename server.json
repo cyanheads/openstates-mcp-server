@@ -46,6 +46,13 @@
           "default": "45000"
         },
         {
+          "name": "OPENSTATES_TOTAL_REQUEST_BUDGET_MS",
+          "description": "Wall-clock ceiling in milliseconds for one call across every retry attempt and the backoff between them. Bounds a slow upstream that keeps failing retryably. Must be at least OPENSTATES_REQUEST_TIMEOUT_MS; startup rejects a lower value.",
+          "format": "number",
+          "isRequired": false,
+          "default": "90000"
+        },
+        {
           "name": "MCP_LOG_LEVEL",
           "description": "Sets the minimum log level for output (e.g., 'debug', 'info', 'warn').",
           "format": "string",
@@ -87,6 +94,13 @@
           "format": "number",
           "isRequired": false,
           "default": "45000"
+        },
+        {
+          "name": "OPENSTATES_TOTAL_REQUEST_BUDGET_MS",
+          "description": "Wall-clock ceiling in milliseconds for one call across every retry attempt and the backoff between them. Bounds a slow upstream that keeps failing retryably. Must be at least OPENSTATES_REQUEST_TIMEOUT_MS; startup rejects a lower value.",
+          "format": "number",
+          "isRequired": false,
+          "default": "90000"
         },
         {
           "name": "MCP_HTTP_HOST",

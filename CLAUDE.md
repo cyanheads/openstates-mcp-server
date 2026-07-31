@@ -2,7 +2,7 @@
 
 **Server:** @cyanheads/openstates-mcp-server
 **Version:** 0.1.16
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.10.17`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.11.0`
 **Engines:** Bun ≥1.3.0, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/sdk` ^1.29.0
 **Zod:** ^4.4.3
@@ -264,7 +264,7 @@ See framework CLAUDE.md and the `api-errors` skill for the full auto-classificat
 src/
   index.ts                              # createApp() entry point
   config/
-    server-config.ts                    # Server-specific env vars (OPENSTATES_API_KEY, OPENSTATES_API_BASE_URL, OPENSTATES_DAILY_REQUEST_BUDGET, OPENSTATES_REQUEST_TIMEOUT_MS)
+    server-config.ts                    # Server-specific env vars (OPENSTATES_API_KEY, OPENSTATES_API_BASE_URL, OPENSTATES_DAILY_REQUEST_BUDGET, OPENSTATES_REQUEST_TIMEOUT_MS, OPENSTATES_TOTAL_REQUEST_BUDGET_MS)
   services/
     openstates/
       openstates-service.ts             # Open States API v3 HTTP client (init/accessor pattern)
@@ -382,7 +382,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 `npm run bundle` produces a `.mcpb` extension bundle for one-click install in Claude Desktop. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies (`mcpb clean`) and strips two classes of `node_modules/**` content that root-anchored `.mcpbignore` patterns cannot reach: dependency-shipped agent docs (`skills/`, `.claude/`, `.agents/`, `SKILL.md`) and platform-specific native bindings, which would otherwise lock the bundle to the platform it was packed on. MCPB is stdio-only — HTTP and Cloudflare Workers deployments are unaffected. Consumers who don't need it can delete `manifest.json` and `.mcpbignore`; `lint:packaging` skips cleanly.
 
-**Adding an env var may require both files:** `server.json` (registry discovery, `environmentVariables[]`) and `manifest.json` (bundle install UX, `mcp_config.env` + `user_config`). `lint:packaging` (run by `devcheck`) verifies that every *required* `server.json` var has a `manifest.json` counterpart. Optional vars are deliberately left out of `manifest.json`: a blank MCPB `user_config` field expands to an empty string, which fails a `.min(1)` or a numeric coercion at startup — so an optional tuning knob (`OPENSTATES_DAILY_REQUEST_BUDGET`, `OPENSTATES_REQUEST_TIMEOUT_MS`) belongs in `server.json` and the README only.
+**Adding an env var may require both files:** `server.json` (registry discovery, `environmentVariables[]`) and `manifest.json` (bundle install UX, `mcp_config.env` + `user_config`). `lint:packaging` (run by `devcheck`) verifies that every *required* `server.json` var has a `manifest.json` counterpart. Optional vars are deliberately left out of `manifest.json`: a blank MCPB `user_config` field expands to an empty string, which fails a `.min(1)` or a numeric coercion at startup — so an optional tuning knob (`OPENSTATES_DAILY_REQUEST_BUDGET`, `OPENSTATES_REQUEST_TIMEOUT_MS`, `OPENSTATES_TOTAL_REQUEST_BUDGET_MS`) belongs in `server.json` and the README only.
 
 **README install badges** (Claude Desktop `.mcpb`, Cursor, VS Code) and the `base64` / `encodeURIComponent` config-generation commands are ship-time concerns — run the `polish-docs-meta` skill, which carries the badge format, layout, and generation snippets in `skills/polish-docs-meta/references/readme.md`.
 

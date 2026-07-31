@@ -28,22 +28,55 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 45_000;
  */
 const MIN_REQUEST_TIMEOUT_MS = 1_000;
 
-const ServerConfigSchema = z.object({
-  apiKey: z.string().min(1).describe('Open States API key from open.pluralpolicy.com'),
-  apiBaseUrl: z.string().default('https://v3.openstates.org').describe('Open States API base URL'),
-  dailyRequestBudget: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .default(FREE_TIER_DAILY_BUDGET)
-    .describe('Maximum upstream Open States requests per rolling 24 hours'),
-  requestTimeoutMs: z.coerce
-    .number()
-    .int()
-    .min(MIN_REQUEST_TIMEOUT_MS)
-    .default(DEFAULT_REQUEST_TIMEOUT_MS)
-    .describe('Per-attempt upstream request deadline in milliseconds'),
-});
+/**
+ * Wall-clock ceiling on one call including every retry and the backoff between them. The
+ * per-attempt deadline bounds a single request; a retryable-but-slow upstream (a 502/503 arriving
+ * near the deadline) multiplies that by the retry ladder, so the call needs its own bound.
+ *
+ * Twice the default deadline: an attempt that fails just short of its own deadline still leaves a
+ * retry nearly a full deadline of its own, so the budget only cuts ladders the deadline alone
+ * would have let run to ~190s. Raising the deadline past this figure means raising this one too —
+ * the schema rejects a budget below the deadline rather than silently capping every attempt.
+ */
+const DEFAULT_TOTAL_REQUEST_BUDGET_MS = 90_000;
+
+const ServerConfigSchema = z
+  .object({
+    apiKey: z.string().min(1).describe('Open States API key from open.pluralpolicy.com'),
+    apiBaseUrl: z
+      .string()
+      .default('https://v3.openstates.org')
+      .describe('Open States API base URL'),
+    dailyRequestBudget: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .default(FREE_TIER_DAILY_BUDGET)
+      .describe('Maximum upstream Open States requests per rolling 24 hours'),
+    requestTimeoutMs: z.coerce
+      .number()
+      .int()
+      .min(MIN_REQUEST_TIMEOUT_MS)
+      .default(DEFAULT_REQUEST_TIMEOUT_MS)
+      .describe('Per-attempt upstream request deadline in milliseconds'),
+    totalRequestBudgetMs: z.coerce
+      .number()
+      .int()
+      .min(MIN_REQUEST_TIMEOUT_MS)
+      .default(DEFAULT_TOTAL_REQUEST_BUDGET_MS)
+      .describe('Wall-clock ceiling in milliseconds for one call across all retry attempts'),
+  })
+  /**
+   * A budget under the per-attempt deadline aborts every call before its own deadline can fire,
+   * and reports the failure as one the whole retry ladder ran out of time on — a knob silently
+   * overriding the one next to it. Rejecting the pair at startup beats discovering it one failed
+   * call at a time.
+   */
+  .refine((config) => config.totalRequestBudgetMs >= config.requestTimeoutMs, {
+    path: ['totalRequestBudgetMs'],
+    message:
+      'must be at least OPENSTATES_REQUEST_TIMEOUT_MS — a total budget below the per-attempt deadline cuts off every attempt before that deadline applies',
+  });
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
 
@@ -55,6 +88,7 @@ export function getServerConfig(): ServerConfig {
     apiBaseUrl: 'OPENSTATES_API_BASE_URL',
     dailyRequestBudget: 'OPENSTATES_DAILY_REQUEST_BUDGET',
     requestTimeoutMs: 'OPENSTATES_REQUEST_TIMEOUT_MS',
+    totalRequestBudgetMs: 'OPENSTATES_TOTAL_REQUEST_BUDGET_MS',
   });
   return _config;
 }
