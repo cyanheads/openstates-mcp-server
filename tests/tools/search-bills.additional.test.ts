@@ -4,6 +4,7 @@
  * @module tests/tools/search-bills.additional.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchBills } from '@/mcp-server/tools/definitions/search-bills.tool.js';
@@ -486,5 +487,51 @@ describe('searchBills — include enrichment surfacing', () => {
     expect(text).toContain('ocd-person/enrich');
     expect(text).toContain('SB 5000');
     expect(text).toContain('companion');
+  });
+});
+
+/**
+ * Paging past the end of a result set 404s upstream. Without a declared reason the caller got a
+ * bare status with no `data.reason` and no recovery hint — the service now carries the upstream
+ * constraint in the message, and the tool supplies the reason and the next move.
+ */
+describe('searchBills — out-of-range page', () => {
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    vi.mocked(getOpenStatesApiService).mockReturnValue({
+      searchBills: vi
+        .fn()
+        .mockRejectedValue(
+          new McpError(
+            JsonRpcErrorCode.NotFound,
+            'Open States rejected the request: invalid page, must be in [1, 3].',
+            { status: 404 },
+          ),
+        ),
+    } as never);
+  });
+
+  it('maps an upstream not-found to invalid_page with a recovery hint', async () => {
+    const ctx = createMockContext({ errors: searchBills.errors });
+    const input = searchBills.input.parse({ jurisdiction: 'wa', page: 99 });
+
+    const err = await searchBills.handler(input, ctx).catch((e: unknown) => e);
+
+    expect((err as McpError).data).toMatchObject({
+      reason: 'invalid_page',
+      recovery: { hint: expect.stringContaining('max_page') },
+    });
+    expect((err as McpError).message).toContain('invalid page, must be in [1, 3]');
+  });
+
+  it('leaves an unrelated upstream failure unwrapped', async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    vi.mocked(getOpenStatesApiService).mockReturnValue({
+      searchBills: vi.fn().mockRejectedValue(new Error('Service offline')),
+    } as never);
+    const ctx = createMockContext({ errors: searchBills.errors });
+    const input = searchBills.input.parse({ jurisdiction: 'wa' });
+
+    await expect(searchBills.handler(input, ctx)).rejects.toThrow('Service offline');
   });
 });

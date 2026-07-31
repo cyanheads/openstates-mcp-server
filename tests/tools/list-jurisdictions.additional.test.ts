@@ -4,6 +4,7 @@
  * @module tests/tools/list-jurisdictions.additional.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { listJurisdictions } from '@/mcp-server/tools/definitions/list-jurisdictions.tool.js';
@@ -252,5 +253,39 @@ describe('listJurisdictions — include enrichment surfacing (organizations, lat
     expect(text).toContain('2025-05-20T02:00:00Z');
     expect(text).toContain('2025-05-20T02:12:00Z');
     expect(text).toContain('success');
+  });
+});
+
+/**
+ * `page > 1` bypasses the inventory merge and returns a single upstream page, so an explicit page
+ * past the end 404s exactly as it does on the search tools.
+ */
+describe('listJurisdictions — out-of-range page', () => {
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    vi.mocked(getOpenStatesApiService).mockReturnValue({
+      listJurisdictions: vi
+        .fn()
+        .mockRejectedValue(
+          new McpError(
+            JsonRpcErrorCode.NotFound,
+            'Open States rejected the request: invalid page, must be in [1, 2].',
+            { status: 404 },
+          ),
+        ),
+    } as never);
+  });
+
+  it('maps an upstream not-found to invalid_page with a recovery hint', async () => {
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
+    const input = listJurisdictions.input.parse({ page: 99 });
+
+    const err = await listJurisdictions.handler(input, ctx).catch((e: unknown) => e);
+
+    expect((err as McpError).data).toMatchObject({
+      reason: 'invalid_page',
+      recovery: { hint: expect.stringContaining('max_page') },
+    });
+    expect((err as McpError).message).toContain('invalid page, must be in [1, 2]');
   });
 });

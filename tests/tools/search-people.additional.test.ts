@@ -323,3 +323,81 @@ describe('searchPeople — include enrichment surfacing', () => {
     expect(text).toContain('official roster');
   });
 });
+
+/**
+ * Open States frequently returns `note: ""` for a person link. Rendering it as `${note}: ${url}`
+ * unconditionally put a dangling separator in front of the URL on the `content[]` path.
+ */
+describe('searchPeople — link rendering with an empty note', () => {
+  const pagination = { page: 1, per_page: 10, max_page: 1, total_items: 1 };
+
+  it('renders the URL alone when the note is empty', () => {
+    const blocks = searchPeople.format!({
+      results: [
+        {
+          ...mockPerson,
+          links: [
+            { url: 'https://housedemocrats.example.gov/thomas/', note: '' },
+            { url: 'https://leg.example.gov/members/thomas', note: '' },
+          ],
+        },
+      ],
+      pagination,
+    });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain(
+      '**Links:** https://housedemocrats.example.gov/thomas/, https://leg.example.gov/members/thomas',
+    );
+    expect(text).not.toContain(': https://housedemocrats.example.gov/thomas/');
+  });
+
+  it('still labels a link that has a note', () => {
+    const blocks = searchPeople.format!({
+      results: [
+        {
+          ...mockPerson,
+          links: [{ url: 'https://leg.example.gov/members/thomas', note: 'official page' }],
+        },
+      ],
+      pagination,
+    });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('**Links:** official page: https://leg.example.gov/members/thomas');
+  });
+});
+
+/**
+ * Paging past the end of a result set 404s upstream. Without a declared reason the caller got a
+ * bare status with no `data.reason` and no recovery hint — the service now carries the upstream
+ * constraint in the message, and the tool supplies the reason and the next move.
+ */
+describe('searchPeople — out-of-range page', () => {
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    vi.mocked(getOpenStatesApiService).mockReturnValue({
+      searchPeople: vi
+        .fn()
+        .mockRejectedValue(
+          new McpError(
+            JsonRpcErrorCode.NotFound,
+            'Open States rejected the request: invalid page, must be in [1, 5].',
+            { status: 404 },
+          ),
+        ),
+    } as never);
+  });
+
+  it('maps an upstream not-found to invalid_page with a recovery hint', async () => {
+    const ctx = createMockContext({ errors: searchPeople.errors });
+    const input = searchPeople.input.parse({ jurisdiction: 'wa', page: 99 });
+
+    const err = await searchPeople.handler(input, ctx).catch((e: unknown) => e);
+
+    expect((err as McpError).data).toMatchObject({
+      reason: 'invalid_page',
+      recovery: { hint: expect.stringContaining('max_page') },
+    });
+    // The upstream constraint survives the remap — it names the range the caller must stay inside.
+    expect((err as McpError).message).toContain('invalid page, must be in [1, 5]');
+  });
+});

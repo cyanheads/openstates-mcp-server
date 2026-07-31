@@ -4,7 +4,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const BillIncludeEnum = z.enum([
@@ -411,6 +411,13 @@ export const searchBills = tool('openstates_search_bills', {
       recovery:
         'Narrow the search: add a jurisdiction, a session, or an action_since/updated_since date filter, or use a more distinctive q term.',
     },
+    {
+      reason: 'invalid_page',
+      code: JsonRpcErrorCode.NotFound,
+      when: 'Open States rejected the request as not found — page is past the last page for this query.',
+      recovery:
+        'Request a page within the max_page bound returned by a previous call; the error message names the valid range.',
+    },
   ],
 
   async handler(input, ctx) {
@@ -421,26 +428,35 @@ export const searchBills = tool('openstates_search_bills', {
     }
 
     const svc = getOpenStatesApiService();
-    const result = await svc.searchBills(
-      {
-        jurisdiction: input.jurisdiction,
-        q: input.q,
-        session: input.session,
-        chamber: input.chamber,
-        classification: input.classification,
-        subject: input.subject && input.subject.length > 0 ? input.subject : undefined,
-        sponsor: input.sponsor,
-        sponsor_classification: input.sponsor_classification,
-        sort: input.sort,
-        action_since: input.action_since,
-        updated_since: input.updated_since,
-        created_since: input.created_since,
-        include: input.include && input.include.length > 0 ? input.include : undefined,
-        page: input.page,
-        per_page: input.per_page,
-      },
-      ctx,
-    );
+    const result = await svc
+      .searchBills(
+        {
+          jurisdiction: input.jurisdiction,
+          q: input.q,
+          session: input.session,
+          chamber: input.chamber,
+          classification: input.classification,
+          subject: input.subject && input.subject.length > 0 ? input.subject : undefined,
+          sponsor: input.sponsor,
+          sponsor_classification: input.sponsor_classification,
+          sort: input.sort,
+          action_since: input.action_since,
+          updated_since: input.updated_since,
+          created_since: input.created_since,
+          include: input.include && input.include.length > 0 ? input.include : undefined,
+          page: input.page,
+          per_page: input.per_page,
+        },
+        ctx,
+      )
+      // The service has already folded the upstream `detail` into the message, so the reason and
+      // recovery hint are all that is missing.
+      .catch((err: unknown) => {
+        if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+          throw ctx.fail('invalid_page', err.message, { ...ctx.recoveryFor('invalid_page') });
+        }
+        throw err;
+      });
 
     ctx.log.info('Searched bills', {
       jurisdiction: input.jurisdiction,

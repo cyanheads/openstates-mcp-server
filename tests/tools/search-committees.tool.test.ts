@@ -3,6 +3,7 @@
  * @module tests/tools/search-committees.tool.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchCommittees } from '@/mcp-server/tools/definitions/search-committees.tool.js';
@@ -221,5 +222,76 @@ describe('searchCommittees — include enrichment surfacing (links, sources)', (
     expect(text).toContain('https://committee.example.gov');
     expect(text).toContain('https://leg.example.gov/committee-roster');
     expect(text).toContain('official roster');
+  });
+});
+
+/**
+ * A committee link with an empty upstream `note` rendered as a dangling `: ` in front of the URL
+ * on the `content[]` path. `structuredContent` keeps `note: ""` — it is the accurate value.
+ */
+describe('searchCommittees — link rendering with an empty note', () => {
+  const pagination = { page: 1, per_page: 10, max_page: 1, total_items: 1 };
+
+  it('renders the URL alone when the note is empty', () => {
+    const blocks = searchCommittees.format!({
+      results: [
+        {
+          ...mockCommittee,
+          links: [{ url: 'https://committee.example.gov', note: '' }],
+        },
+      ],
+      pagination,
+    });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('**Links:** https://committee.example.gov');
+    expect(text).not.toContain(': https://committee.example.gov');
+  });
+
+  it('still labels a link that has a note', () => {
+    const blocks = searchCommittees.format!({
+      results: [
+        {
+          ...mockCommittee,
+          links: [{ url: 'https://committee.example.gov', note: 'homepage' }],
+        },
+      ],
+      pagination,
+    });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('**Links:** homepage: https://committee.example.gov');
+  });
+});
+
+/**
+ * Paging past the end of a result set 404s upstream. Without a declared reason the caller got a
+ * bare status with no `data.reason` and no recovery hint.
+ */
+describe('searchCommittees — out-of-range page', () => {
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    vi.mocked(getOpenStatesApiService).mockReturnValue({
+      searchCommittees: vi
+        .fn()
+        .mockRejectedValue(
+          new McpError(
+            JsonRpcErrorCode.NotFound,
+            'Open States rejected the request: invalid page, must be in [1, 2].',
+            { status: 404 },
+          ),
+        ),
+    } as never);
+  });
+
+  it('maps an upstream not-found to invalid_page with a recovery hint', async () => {
+    const ctx = createMockContext({ errors: searchCommittees.errors });
+    const input = searchCommittees.input.parse({ jurisdiction: 'wa', page: 99 });
+
+    const err = await searchCommittees.handler(input, ctx).catch((e: unknown) => e);
+
+    expect((err as McpError).data).toMatchObject({
+      reason: 'invalid_page',
+      recovery: { hint: expect.stringContaining('max_page') },
+    });
+    expect((err as McpError).message).toContain('invalid page, must be in [1, 2]');
   });
 });

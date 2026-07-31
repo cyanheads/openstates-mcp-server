@@ -3,6 +3,7 @@
  * @module tests/tools/search-events.tool.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchEvents } from '@/mcp-server/tools/definitions/search-events.tool.js';
@@ -293,5 +294,85 @@ describe('searchEvents — participant without upstream role (issue #19)', () =>
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('Jane Doe');
     expect(text).not.toContain('undefined');
+  });
+});
+
+/**
+ * Links, media, and documents all render as `${note}: ${url}`. Open States often supplies an empty
+ * `note`, which put a dangling separator in front of every URL on the `content[]` path.
+ * `structuredContent` keeps `note: ""` — it is the accurate upstream value.
+ */
+describe('searchEvents — link, media, and document rendering with an empty note', () => {
+  const pagination = { page: 1, per_page: 10, max_page: 1, total_items: 1 };
+
+  const render = (event: Record<string, unknown>) =>
+    (
+      searchEvents.format!({
+        results: [{ ...mockEvent, ...event }],
+        pagination,
+      })[0] as { text: string }
+    ).text;
+
+  it('renders a link URL alone when the note is empty', () => {
+    const text = render({ links: [{ url: 'https://leg.example.gov/hearing', note: '' }] });
+    expect(text).toContain('**Links:** https://leg.example.gov/hearing');
+    expect(text).not.toContain(': https://leg.example.gov/hearing');
+  });
+
+  it('renders a media URL alone when the note is empty', () => {
+    const text = render({ media: [{ url: 'https://tvw.example.org/clip', note: '' }] });
+    expect(text).toContain('**Media:** https://tvw.example.org/clip');
+    expect(text).not.toContain(': https://tvw.example.org/clip');
+  });
+
+  it('renders a document URL alone when the note is empty', () => {
+    const text = render({ documents: [{ url: 'https://leg.example.gov/agenda.pdf', note: '' }] });
+    expect(text).toContain('**Documents:** https://leg.example.gov/agenda.pdf');
+    expect(text).not.toContain(': https://leg.example.gov/agenda.pdf');
+  });
+
+  it('still labels each list when the note is present', () => {
+    const text = render({
+      links: [{ url: 'https://leg.example.gov/hearing', note: 'hearing notice' }],
+      media: [{ url: 'https://tvw.example.org/clip', note: 'video' }],
+      documents: [{ url: 'https://leg.example.gov/agenda.pdf', note: 'agenda' }],
+    });
+    expect(text).toContain('**Links:** hearing notice: https://leg.example.gov/hearing');
+    expect(text).toContain('**Media:** video: https://tvw.example.org/clip');
+    expect(text).toContain('**Documents:** agenda: https://leg.example.gov/agenda.pdf');
+  });
+});
+
+/**
+ * Paging past the end of a result set 404s upstream. Without a declared reason the caller got a
+ * bare status with no `data.reason` and no recovery hint.
+ */
+describe('searchEvents — out-of-range page', () => {
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    vi.mocked(getOpenStatesApiService).mockReturnValue({
+      searchEvents: vi
+        .fn()
+        .mockRejectedValue(
+          new McpError(
+            JsonRpcErrorCode.NotFound,
+            'Open States rejected the request: invalid page, must be in [1, 1].',
+            { status: 404 },
+          ),
+        ),
+    } as never);
+  });
+
+  it('maps an upstream not-found to invalid_page with a recovery hint', async () => {
+    const ctx = createMockContext({ errors: searchEvents.errors });
+    const input = searchEvents.input.parse({ jurisdiction: 'wa', page: 99, per_page: 3 });
+
+    const err = await searchEvents.handler(input, ctx).catch((e: unknown) => e);
+
+    expect((err as McpError).data).toMatchObject({
+      reason: 'invalid_page',
+      recovery: { hint: expect.stringContaining('max_page') },
+    });
+    expect((err as McpError).message).toContain('invalid page, must be in [1, 1]');
   });
 });

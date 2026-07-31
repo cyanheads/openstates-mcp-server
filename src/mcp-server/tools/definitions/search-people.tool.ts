@@ -4,7 +4,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const PersonIncludeEnum = z.enum([
@@ -213,6 +213,13 @@ export const searchPeople = tool('openstates_search_people', {
       recovery:
         'Narrow the search: keep the jurisdiction, add org_classification or district, and drop any include values you do not need.',
     },
+    {
+      reason: 'invalid_page',
+      code: JsonRpcErrorCode.NotFound,
+      when: 'Open States rejected the request as not found — page is past the last page for this query.',
+      recovery:
+        'Request a page within the max_page bound returned by a previous call; the error message names the valid range.',
+    },
   ],
 
   async handler(input, ctx) {
@@ -225,18 +232,27 @@ export const searchPeople = tool('openstates_search_people', {
     }
 
     const svc = getOpenStatesApiService();
-    const result = await svc.searchPeople(
-      {
-        jurisdiction: input.jurisdiction,
-        name: input.name,
-        org_classification: input.org_classification,
-        district: input.district,
-        include: input.include && input.include.length > 0 ? input.include : undefined,
-        page: input.page,
-        per_page: input.per_page,
-      },
-      ctx,
-    );
+    const result = await svc
+      .searchPeople(
+        {
+          jurisdiction: input.jurisdiction,
+          name: input.name,
+          org_classification: input.org_classification,
+          district: input.district,
+          include: input.include && input.include.length > 0 ? input.include : undefined,
+          page: input.page,
+          per_page: input.per_page,
+        },
+        ctx,
+      )
+      // The service has already folded the upstream `detail` into the message, so the reason and
+      // recovery hint are all that is missing.
+      .catch((err: unknown) => {
+        if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
+          throw ctx.fail('invalid_page', err.message, { ...ctx.recoveryFor('invalid_page') });
+        }
+        throw err;
+      });
 
     ctx.log.info('Searched people', {
       jurisdiction: input.jurisdiction,
@@ -307,7 +323,9 @@ export const searchPeople = tool('openstates_search_people', {
         }
       }
       if (person.links?.length) {
-        lines.push(`**Links:** ${person.links.map((l) => `${l.note}: ${l.url}`).join(', ')}`);
+        lines.push(
+          `**Links:** ${person.links.map((l) => (l.note ? `${l.note}: ${l.url}` : l.url)).join(', ')}`,
+        );
       }
       if (person.other_names?.length) {
         lines.push('**Other names:**');
