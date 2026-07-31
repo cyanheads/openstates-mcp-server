@@ -56,7 +56,9 @@ export const getEvent = tool('openstates_get_event', {
         z
           .object({
             url: z.string().describe('Link URL.'),
-            note: z.string().describe('Link description.'),
+            note: z
+              .string()
+              .describe('Link description. Empty string when Open States recorded no description.'),
           })
           .describe('External link record.'),
       )
@@ -67,7 +69,11 @@ export const getEvent = tool('openstates_get_event', {
         z
           .object({
             url: z.string().describe('Media URL.'),
-            note: z.string().describe('Media description.'),
+            note: z
+              .string()
+              .describe(
+                'Media description. Empty string when Open States recorded no description.',
+              ),
           })
           .describe('Media link record.'),
       )
@@ -78,7 +84,11 @@ export const getEvent = tool('openstates_get_event', {
         z
           .object({
             url: z.string().describe('Document URL.'),
-            note: z.string().describe('Document description.'),
+            note: z
+              .string()
+              .describe(
+                'Document description. Empty string when Open States recorded no description.',
+              ),
           })
           .describe('Document link record.'),
       )
@@ -89,7 +99,9 @@ export const getEvent = tool('openstates_get_event', {
         z
           .object({
             url: z.string().describe('Source URL.'),
-            note: z.string().describe('Source note.'),
+            note: z
+              .string()
+              .describe('Source note. Empty string when Open States recorded no note.'),
           })
           .describe('Source record.'),
       )

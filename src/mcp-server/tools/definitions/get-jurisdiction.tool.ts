@@ -47,9 +47,19 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
             name: z.string().describe('Human-readable session name.'),
             classification: z
               .string()
-              .describe('Session classification: "primary", "special", etc.'),
-            start_date: z.string().describe('Session start date.'),
-            end_date: z.string().describe('Session end date.'),
+              .describe(
+                'Session classification: "primary", "special", etc. Empty string when Open States recorded none, which covers 28% of sessions — 13 jurisdictions carry no classification on any session at all.',
+              ),
+            start_date: z
+              .string()
+              .describe(
+                'Session start date. Empty string when Open States recorded no value; an absent endpoint means unknown, not ongoing.',
+              ),
+            end_date: z
+              .string()
+              .describe(
+                'Session end date. Empty string when Open States recorded no value; an absent endpoint means unknown, not ongoing.',
+              ),
           })
           .describe('Legislative session record.'),
       )

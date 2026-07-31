@@ -38,9 +38,19 @@ export const getCommittee = tool('openstates_get_committee', {
       .array(
         z
           .object({
-            person_id: z.string().describe('OCD person ID of the member.'),
-            person_name: z.string().describe('Member name.'),
-            role: z.string().describe('Member role (e.g., "chair", "member").'),
+            person_id: z
+              .string()
+              .describe(
+                'OCD person ID of the member — pass it to openstates_search_people as id for the full record. Empty string when the membership carries no linked person.',
+              ),
+            person_name: z
+              .string()
+              .describe('Member name. Empty string when Open States recorded none.'),
+            role: z
+              .string()
+              .describe(
+                'Member role (e.g., "chair", "member"). Empty string when Open States recorded none.',
+              ),
           })
           .describe('Committee membership record.'),
       )
@@ -51,7 +61,11 @@ export const getCommittee = tool('openstates_get_committee', {
         z
           .object({
             url: z.string().describe('Link URL.'),
-            note: z.string().describe('Link description (e.g., "homepage").'),
+            note: z
+              .string()
+              .describe(
+                'Link description (e.g., "homepage"). Empty string when Open States recorded no description.',
+              ),
           })
           .describe('External link record.'),
       )
@@ -62,7 +76,9 @@ export const getCommittee = tool('openstates_get_committee', {
         z
           .object({
             url: z.string().describe('Source URL.'),
-            note: z.string().describe('Source note.'),
+            note: z
+              .string()
+              .describe('Source note. Empty string when Open States recorded no note.'),
           })
           .describe('Source record.'),
       )

@@ -100,10 +100,16 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
                   ),
               })
               .describe('Home jurisdiction.'),
-            given_name: z.string().describe('Given (first) name.'),
-            family_name: z.string().describe('Family (last) name.'),
+            given_name: z
+              .string()
+              .describe('Given (first) name. Empty string when Open States recorded none.'),
+            family_name: z
+              .string()
+              .describe('Family (last) name. Empty string when Open States recorded none.'),
             email: z.string().describe('Email address. Empty string when not available.'),
-            openstates_url: z.string().describe('Open States profile URL.'),
+            openstates_url: z
+              .string()
+              .describe('Open States profile URL. Empty string when Open States recorded none.'),
             image: z
               .string()
               .optional()
@@ -127,7 +133,11 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
                 z
                   .object({
                     url: z.string().describe('Link URL.'),
-                    note: z.string().describe('Link description.'),
+                    note: z
+                      .string()
+                      .describe(
+                        'Link description. Empty string when Open States recorded no description — common on person links.',
+                      ),
                   })
                   .describe('External link record.'),
               )
@@ -138,7 +148,11 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
                 z
                   .object({
                     name: z.string().describe('Alternate or former name.'),
-                    note: z.string().describe('Note describing the alternate name.'),
+                    note: z
+                      .string()
+                      .describe(
+                        'Note describing the alternate name. Empty string when Open States recorded no note.',
+                      ),
                   })
                   .describe('Alternate name record.'),
               )
@@ -160,7 +174,9 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
                 z
                   .object({
                     url: z.string().describe('Source URL.'),
-                    note: z.string().describe('Source note.'),
+                    note: z
+                      .string()
+                      .describe('Source note. Empty string when Open States recorded no note.'),
                   })
                   .describe('Source record.'),
               )

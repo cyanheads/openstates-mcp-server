@@ -194,7 +194,7 @@ export const searchBills = tool('openstates_search_bills', {
                         id: z
                           .string()
                           .describe(
-                            "OCD person ID. Pass it back as the sponsor filter to find this legislator's other bills — an exact handle where the sponsor name string is often only a family name.",
+                            "OCD person ID — an exact handle where the sponsor name string is often only a family name. Pass it to openstates_search_people as id for the full legislator record, or back as the sponsor filter to find this legislator's other bills.",
                           ),
                         name: z.string().describe('Person name.'),
                       })
@@ -212,7 +212,9 @@ export const searchBills = tool('openstates_search_bills', {
                 z
                   .object({
                     description: z.string().describe('Action description.'),
-                    date: z.string().describe('Action date.'),
+                    date: z
+                      .string()
+                      .describe('Action date. Empty string when Open States recorded no date.'),
                     classification: z.array(z.string()).describe('Action classifications.'),
                     order: z.number().describe('Action sequence order.'),
                     organization: z
@@ -231,7 +233,9 @@ export const searchBills = tool('openstates_search_bills', {
                 z
                   .object({
                     abstract: z.string().describe('Plain-language bill summary.'),
-                    note: z.string().describe('Source note.'),
+                    note: z
+                      .string()
+                      .describe('Source note. Empty string when Open States recorded no note.'),
                   })
                   .describe('Abstract record.'),
               )
@@ -242,7 +246,11 @@ export const searchBills = tool('openstates_search_bills', {
                 z
                   .object({
                     title: z.string().describe('Alternate bill title.'),
-                    note: z.string().describe('Note describing the alternate title.'),
+                    note: z
+                      .string()
+                      .describe(
+                        'Note describing the alternate title. Empty string when Open States recorded no note.',
+                      ),
                   })
                   .describe('Alternate title record.'),
               )
@@ -269,7 +277,9 @@ export const searchBills = tool('openstates_search_bills', {
                 z
                   .object({
                     url: z.string().describe('Source URL.'),
-                    note: z.string().describe('Source note.'),
+                    note: z
+                      .string()
+                      .describe('Source note. Empty string when Open States recorded no note.'),
                   })
                   .describe('Source record.'),
               )
@@ -280,8 +290,14 @@ export const searchBills = tool('openstates_search_bills', {
                 z
                   .object({
                     id: z.string().describe('Version ID.'),
-                    note: z.string().describe('Version note.'),
-                    date: z.string().describe('Version date.'),
+                    note: z
+                      .string()
+                      .describe('Version note. Empty string when Open States recorded no note.'),
+                    date: z
+                      .string()
+                      .describe(
+                        'Version date. Empty string when Open States recorded no date, which is the usual case for bill versions.',
+                      ),
                     links: z
                       .array(
                         z
@@ -302,8 +318,14 @@ export const searchBills = tool('openstates_search_bills', {
                 z
                   .object({
                     id: z.string().describe('Document ID.'),
-                    note: z.string().describe('Document note.'),
-                    date: z.string().describe('Document date.'),
+                    note: z
+                      .string()
+                      .describe('Document note. Empty string when Open States recorded no note.'),
+                    date: z
+                      .string()
+                      .describe(
+                        'Document date. Empty string when Open States recorded no date, which is the usual case for bill documents.',
+                      ),
                     links: z
                       .array(
                         z
@@ -325,7 +347,9 @@ export const searchBills = tool('openstates_search_bills', {
                   .object({
                     id: z.string().describe('Vote event ID.'),
                     motion_text: z.string().describe('Motion text.'),
-                    start_date: z.string().describe('Vote date.'),
+                    start_date: z
+                      .string()
+                      .describe('Vote date. Empty string when Open States recorded no date.'),
                     result: z.string().describe('Vote result: "pass" or "fail".'),
                     identifier: z.string().describe('Vote identifier.'),
                     counts: z
