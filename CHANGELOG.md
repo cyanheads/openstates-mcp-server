@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.17](changelog/0.1.x/0.1.17.md) — 2026-07-31
+
+Upstream 4xx detail now surfaces to callers with an invalid_page error contract on paginated tools, a configurable total-retry wall-clock budget bounds the retry ladder, and empty upstream notes no longer render as stray punctuation in link/media/document lists.
+
 ## [0.1.16](changelog/0.1.x/0.1.16.md) — 2026-07-26
 
 CLAUDE.md reconciled with the framework template: adds the missing What's Next? and Server identity and instructions sections, replaces stale ctx.sample references with ctx.enrich/ctx.content, and documents ctx.state.getMany, z.stringbool(), and the retryable/ctx.recoveryFor() error flow.
