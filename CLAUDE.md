@@ -1,7 +1,7 @@
 # Developer Protocol
 
 **Server:** @cyanheads/openstates-mcp-server
-**Version:** 0.1.17
+**Version:** 0.2.0
 **Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.11.0`
 **Engines:** Bun ≥1.3.0, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/sdk` ^1.29.0
@@ -268,6 +268,7 @@ src/
   services/
     openstates/
       openstates-service.ts             # Open States API v3 HTTP client (init/accessor pattern)
+      jurisdiction-inventory.ts         # The 56 covered jurisdictions — name→abbr map, validity check
       types.ts                          # Domain types (Bill, Person, Committee, Event, Jurisdiction)
   mcp-server/
     tools/definitions/

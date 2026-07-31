@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.17-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openstates-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/openstates-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openstates-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.14-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openstates-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/openstates-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openstates-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.14-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -32,7 +32,7 @@
 | `openstates_search_bills` | Search state legislative bills across all covered US jurisdictions with full-text search, jurisdiction/session filtering, subject tags, and sponsor lookups |
 | `openstates_get_bill` | Fetch full detail for a specific bill by OCD ID or three-part path (jurisdiction + session + bill_id) |
 | `openstates_search_people` | Search state legislators and officials within a jurisdiction by name, chamber, district, or party |
-| `openstates_get_legislators_by_location` | Find all legislators representing a geographic coordinate (latitude/longitude) |
+| `openstates_get_legislators_by_location` | Find every legislator representing a geographic coordinate (latitude/longitude) — state legislators and the federal delegation |
 | `openstates_search_committees` | List committees for a jurisdiction (experimental — not all states have coverage) |
 | `openstates_get_committee` | Fetch committee detail by OCD organization ID, with optional membership roster |
 | `openstates_search_events` | Search hearings, floor sessions, and committee meetings (experimental) |
@@ -52,7 +52,7 @@ Search state legislative bills with rich filtering and inline related data.
 - Every result carries `openstates_url` (citable page) and `updated_at` (the field the default `sort=updated_desc` orders by)
 - `action_since`, `updated_since`, and `created_since` date filters for change-tracking
 - Pagination up to 20 results per page
-- Empty-result recovery: echoes applied filters and suggests how to broaden
+- Empty-result recovery: `appliedFilters` echoes every filter the query was issued with and the notice names each one that narrowed it, so a zero-result answer identifies its own cause. A `jurisdiction` that matches no covered jurisdiction is called out by name — Open States answers an unrecognized one with zero bills rather than an error
 
 ---
 
@@ -72,7 +72,7 @@ Fetch complete bill detail by OCD ID or path lookup.
 
 Search legislators and officials within one jurisdiction by name, chamber, or district.
 
-- `jurisdiction` is required — a search spanning all 56 jurisdictions exceeds the upstream timeout, name-only searches included, so an omitted `jurisdiction` is rejected before any request is issued. Use `openstates_list_jurisdictions` to pick one, or `openstates_get_legislators_by_location` when you have coordinates but no state
+- `jurisdiction` is required by the input schema — a search spanning all 56 jurisdictions exceeds the upstream timeout, name-only searches included, so a call that omits it fails schema validation. Use `openstates_list_jurisdictions` to pick one, or `openstates_get_legislators_by_location` when you have coordinates but no state
 - Case-insensitive substring matching on name
 - `org_classification` targets a role type: `upper` (Senate), `lower` (House/Assembly), `executive` (governors and executive officials), `legislature` (every legislator — both chambers merged into one paginated set, all upper members then all lower)
 - Omitting `org_classification` is not equivalent to `legislature` — it returns every officeholder, executive officials included
@@ -84,9 +84,11 @@ Search legislators and officials within one jurisdiction by name, chamber, or di
 
 ### `openstates_get_legislators_by_location`
 
-Find all state legislators representing a geographic coordinate.
+Find every legislator representing a geographic coordinate, across both tiers of government.
 
-- Pass decimal-degree latitude/longitude to get state senators and representatives for that location
+- Pass decimal-degree latitude/longitude to get the state senators and representatives for that location, plus its two US Senators and its US Representative
+- `jurisdiction.classification` separates the tiers: `"state"` is a state legislature, `"country"` is the US Congress. `current_role.org_classification` does not — it is `upper`/`lower` for a US Senator exactly as for a state senator
+- `stateCount` and `federalCount` report the split, and the rendered text labels each legislator's tier
 - Useful for constituent-to-representative matching, address-based policy research, and electoral boundary analysis
 - Does not geocode addresses — the caller must provide coordinates
 - Returns a coverage note when no legislators are found (e.g., coordinates outside US boundaries)
@@ -105,7 +107,7 @@ Discover and look up jurisdiction coverage metadata.
 
 ### Committee and event tools (experimental)
 
-`openstates_search_committees`, `openstates_get_committee`, `openstates_search_events`, and `openstates_get_event` are experimental — Open States is actively working to restore committee support and most states do not publish event data. Empty results may indicate the state lacks data, not that no committees or events exist. The two search tools (`openstates_search_committees` and `openstates_search_events`) include a `coverageNote` field in their output documenting this limitation, and both require a `jurisdiction` — a request spanning all 56 exceeds the upstream timeout, so an omitted one is rejected before any request is issued.
+`openstates_search_committees`, `openstates_get_committee`, `openstates_search_events`, and `openstates_get_event` are experimental — Open States is actively working to restore committee support and most states do not publish event data. Empty results may indicate the state lacks data, not that no committees or events exist. The two search tools (`openstates_search_committees` and `openstates_search_events`) include a `coverageNote` field in their output documenting this limitation, and both require a `jurisdiction` in their input schema — a request spanning all 56 exceeds the upstream timeout, so a call that omits it fails schema validation.
 
 ## Resources and prompts
 

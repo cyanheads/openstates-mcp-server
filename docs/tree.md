@@ -1,6 +1,6 @@
 # openstates-mcp-server - Directory Structure
 
-Generated on: 2026-07-26 10:47:21
+Generated on: 2026-07-31 09:16:19
 
 ```text
 openstates-mcp-server/
@@ -22,6 +22,7 @@ openstates-mcp-server/
 │   └── settings.json
 ├── changelog/
 │   ├── 0.1.x/
+│   ├── 0.2.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md
@@ -153,6 +154,7 @@ openstates-mcp-server/
 │   │           └── search-people.tool.ts
 │   ├── services/
 │   │   └── openstates/
+│   │       ├── jurisdiction-inventory.ts
 │   │       ├── openstates-service.ts
 │   │       └── types.ts
 │   └── index.ts

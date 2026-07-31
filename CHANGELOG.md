@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.0](changelog/0.2.x/0.2.0.md) — 2026-07-31 · ⚠️ Breaking
+
+jurisdiction is now a required input field (not just handler-enforced) on search_people/search_committees/search_events — a breaking schema change; bill other_identifiers no longer fails output validation; search_bills names every filter behind a zero-result answer; get_legislators_by_location discloses the federal delegation it already returned.
+
 ## [0.1.17](changelog/0.1.x/0.1.17.md) — 2026-07-31
 
 Upstream 4xx detail now surfaces to callers with an invalid_page error contract on paginated tools, a configurable total-retry wall-clock budget bounds the retry ladder, and empty upstream notes no longer render as stray punctuation in link/media/document lists.
