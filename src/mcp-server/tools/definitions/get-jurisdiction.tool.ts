@@ -154,9 +154,22 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
       lines.push('');
       lines.push('## Legislative Sessions');
       for (const s of result.legislative_sessions) {
-        lines.push(
-          `- \`${s.identifier}\` — ${s.name} (${s.classification}) ${s.start_date}–${s.end_date}`,
-        );
+        /**
+         * Classification and both date endpoints are required non-nullable strings that Open
+         * States sends as `""` on sessions it never finished scraping. A missing endpoint means
+         * unknown, not open-ended — every observed case is a long-concluded session — so nothing
+         * here substitutes "present" for an absent date.
+         */
+        const cls = s.classification ? ` (${s.classification})` : '';
+        const range =
+          s.start_date && s.end_date
+            ? ` ${s.start_date}–${s.end_date}`
+            : s.start_date
+              ? ` from ${s.start_date}`
+              : s.end_date
+                ? ` until ${s.end_date}`
+                : '';
+        lines.push(`- \`${s.identifier}\` — ${s.name}${cls}${range}`);
       }
     }
     if (result.organizations?.length) {

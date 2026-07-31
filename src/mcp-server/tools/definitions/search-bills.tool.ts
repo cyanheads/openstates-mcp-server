@@ -588,7 +588,7 @@ export const searchBills = tool('openstates_search_bills', {
       if (bill.abstracts?.length) {
         lines.push('');
         for (const abs of bill.abstracts) {
-          lines.push(`*${abs.abstract}* _(${abs.note})_`);
+          lines.push(`*${abs.abstract}*${abs.note ? ` _(${abs.note})_` : ''}`);
         }
       }
       if (bill.actions?.length) {
@@ -597,7 +597,7 @@ export const searchBills = tool('openstates_search_bills', {
         for (const a of bill.actions) {
           const cls = a.classification.length > 0 ? ` [${a.classification.join(', ')}]` : '';
           lines.push(
-            `- #${a.order} ${a.date}: ${a.description}${cls} — ${a.organization.name} (${a.organization.classification})`,
+            `- #${a.order}${a.date ? ` ${a.date}` : ''}: ${a.description}${cls} — ${a.organization.name} (${a.organization.classification})`,
           );
         }
       }
@@ -619,7 +619,7 @@ export const searchBills = tool('openstates_search_bills', {
         lines.push('');
         lines.push('**Votes:**');
         for (const v of bill.votes) {
-          lines.push(`### ${v.motion_text} (${v.start_date})`);
+          lines.push(`### ${v.motion_text}${v.start_date ? ` (${v.start_date})` : ''}`);
           lines.push(`**Result:** ${v.result} | **ID:** ${v.id} | **Identifier:** ${v.identifier}`);
           const counts = v.counts.map((c) => `${c.option}: ${c.value}`).join(', ');
           lines.push(`**Tally:** ${counts}`);
@@ -637,7 +637,7 @@ export const searchBills = tool('openstates_search_bills', {
         lines.push('**Bill Text Versions:**');
         for (const v of bill.versions) {
           lines.push(
-            `- [${v.id}] ${v.note} (${v.date}): ${v.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
+            `- [${v.id}]${v.note ? ` ${v.note}` : ''}${v.date ? ` (${v.date})` : ''}: ${v.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
           );
         }
       }
@@ -646,7 +646,7 @@ export const searchBills = tool('openstates_search_bills', {
         lines.push('**Documents:**');
         for (const d of bill.documents) {
           lines.push(
-            `- [${d.id}] ${d.note} (${d.date}): ${d.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
+            `- [${d.id}]${d.note ? ` ${d.note}` : ''}${d.date ? ` (${d.date})` : ''}: ${d.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
           );
         }
       }

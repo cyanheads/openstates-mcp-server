@@ -361,7 +361,7 @@ export const getBill = tool('openstates_get_bill', {
       lines.push('');
       lines.push('## Summary');
       for (const abs of result.abstracts) {
-        lines.push(`${abs.abstract} _(${abs.note})_`);
+        lines.push(`${abs.abstract}${abs.note ? ` _(${abs.note})_` : ''}`);
       }
     }
 
@@ -381,7 +381,7 @@ export const getBill = tool('openstates_get_bill', {
       for (const a of result.actions) {
         const cls = a.classification.length > 0 ? ` [${a.classification.join(', ')}]` : '';
         lines.push(
-          `- #${a.order} ${a.date}: ${a.description}${cls} — ${a.organization.name} (${a.organization.classification})`,
+          `- #${a.order}${a.date ? ` ${a.date}` : ''}: ${a.description}${cls} — ${a.organization.name} (${a.organization.classification})`,
         );
       }
     }
@@ -390,7 +390,7 @@ export const getBill = tool('openstates_get_bill', {
       lines.push('');
       lines.push('## Votes');
       for (const v of result.votes) {
-        lines.push(`### ${v.motion_text} (${v.start_date})`);
+        lines.push(`### ${v.motion_text}${v.start_date ? ` (${v.start_date})` : ''}`);
         lines.push(`**Result:** ${v.result} | **ID:** ${v.id} | **Identifier:** ${v.identifier}`);
         const counts = v.counts.map((c) => `${c.option}: ${c.value}`).join(', ');
         lines.push(`**Tally:** ${counts}`);
@@ -409,7 +409,7 @@ export const getBill = tool('openstates_get_bill', {
       lines.push('## Bill Text Versions');
       for (const v of result.versions) {
         lines.push(
-          `- [${v.id}] ${v.note} (${v.date}): ${v.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
+          `- [${v.id}]${v.note ? ` ${v.note}` : ''}${v.date ? ` (${v.date})` : ''}: ${v.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
         );
       }
     }
@@ -419,7 +419,7 @@ export const getBill = tool('openstates_get_bill', {
       lines.push('## Documents');
       for (const d of result.documents) {
         lines.push(
-          `- [${d.id}] ${d.note} (${d.date}): ${d.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
+          `- [${d.id}]${d.note ? ` ${d.note}` : ''}${d.date ? ` (${d.date})` : ''}: ${d.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
         );
       }
     }

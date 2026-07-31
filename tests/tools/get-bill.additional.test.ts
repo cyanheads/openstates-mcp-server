@@ -9,7 +9,8 @@ import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getBill } from '@/mcp-server/tools/definitions/get-bill.tool.js';
 
-vi.mock('@/services/openstates/openstates-service.js', () => ({
+vi.mock('@/services/openstates/openstates-service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/openstates/openstates-service.js')>()),
   getOpenStatesApiService: vi.fn(),
 }));
 
@@ -324,5 +325,159 @@ describe('getBill — other_identifiers without a scheme (issue #31)', () => {
     expect(text).toContain('- ocd-bill-wa-2025_2026-hb2073');
     expect(text).not.toContain('undefined');
     expect(text).not.toContain('()');
+  });
+});
+
+/**
+ * Regression coverage for issue #38. `note` is a required, non-nullable string on abstracts,
+ * versions, and documents, so `""` is a legal upstream value — and Open States sends it.
+ * Interpolating it unguarded left `_()_` after an abstract. Version and document lines carry an
+ * optional `date` alongside `note`, so their full combination matrix lives in the issue #41 block
+ * below. structuredContent is unaffected: `note: ""` is the accurate upstream value and stays.
+ */
+describe('getBill — empty abstract note renders no stray punctuation (issue #38)', () => {
+  const abstract = 'This bill establishes standards for public safety.';
+
+  it('drops the abstract parenthetical when note is empty', () => {
+    const blocks = getBill.format!({ ...baseBill, abstracts: [{ abstract, note: '' }] });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text.split('\n')).toContain(abstract);
+    expect(text).not.toContain('_()_');
+  });
+
+  it('keeps the abstract parenthetical when note is present', () => {
+    const blocks = getBill.format!({
+      ...baseBill,
+      abstracts: [{ abstract, note: 'House Research' }],
+    });
+    const text = (blocks[0] as { text: string }).text;
+    expect(text.split('\n')).toContain(`${abstract} _(House Research)_`);
+  });
+});
+
+/**
+ * Regression coverage for issue #41. `date` is a required, non-nullable string on versions and
+ * documents, and Open States routinely sends `""` alongside a populated `note`, which left a
+ * bare `()` mid-line. The note and date segments are independently optional, so each of the four
+ * combinations is pinned here: id alone, id + note, id + date, id + note + date. The last must
+ * stay byte-identical to what shipped before the guard. structuredContent is unaffected:
+ * `date: ""` is the accurate upstream value and stays.
+ */
+describe('getBill — version and document note/date composition (issue #41)', () => {
+  const links = [{ url: 'https://leg.wa.gov/HB1000.pdf', media_type: 'application/pdf' }];
+  const tail = 'https://leg.wa.gov/HB1000.pdf [application/pdf]';
+
+  const renderVersion = (note: string, date: string) => {
+    const blocks = getBill.format!({
+      ...baseBill,
+      versions: [{ id: 'HB1000-2025', note, date, links }],
+    });
+    return (blocks[0] as { text: string }).text;
+  };
+
+  const renderDocument = (note: string, date: string) => {
+    const blocks = getBill.format!({
+      ...baseBill,
+      documents: [{ id: 'doc-1', note, date, links }],
+    });
+    return (blocks[0] as { text: string }).text;
+  };
+
+  it('renders a version with neither note nor date as the id alone', () => {
+    expect(renderVersion('', '').split('\n')).toContain(`- [HB1000-2025]: ${tail}`);
+  });
+
+  it('renders a version with a note and no date without a parenthetical', () => {
+    expect(renderVersion('Introduced', '').split('\n')).toContain(
+      `- [HB1000-2025] Introduced: ${tail}`,
+    );
+  });
+
+  it('renders a version with a date and no note', () => {
+    expect(renderVersion('', '2025-01-13').split('\n')).toContain(
+      `- [HB1000-2025] (2025-01-13): ${tail}`,
+    );
+  });
+
+  it('renders a version with both note and date unchanged', () => {
+    expect(renderVersion('Introduced', '2025-01-13').split('\n')).toContain(
+      `- [HB1000-2025] Introduced (2025-01-13): ${tail}`,
+    );
+  });
+
+  it('renders a document with neither note nor date as the id alone', () => {
+    expect(renderDocument('', '').split('\n')).toContain(`- [doc-1]: ${tail}`);
+  });
+
+  it('renders a document with a note and no date without a parenthetical', () => {
+    expect(renderDocument('Fiscal Note', '').split('\n')).toContain(
+      `- [doc-1] Fiscal Note: ${tail}`,
+    );
+  });
+
+  it('renders a document with a date and no note', () => {
+    expect(renderDocument('', '2025-01-20').split('\n')).toContain(
+      `- [doc-1] (2025-01-20): ${tail}`,
+    );
+  });
+
+  it('renders a document with both note and date unchanged', () => {
+    expect(renderDocument('Fiscal Note', '2025-01-20').split('\n')).toContain(
+      `- [doc-1] Fiscal Note (2025-01-20): ${tail}`,
+    );
+  });
+});
+
+/**
+ * Regression coverage for issue #43. `start_date` on a vote event and `date` on an action are
+ * required, non-nullable strings, so `""` is a legal upstream value that reaches format() intact.
+ * Interpolated unguarded, the first left a bare `()` in the vote heading and the second a double
+ * space plus an orphan colon on the action line. structuredContent is unaffected: `""` is the
+ * accurate upstream value and stays.
+ */
+describe('getBill — empty vote start_date and action date (issue #43)', () => {
+  const renderLines = (bill: Record<string, unknown>) => {
+    const blocks = getBill.format!({ ...baseBill, ...bill });
+    return (blocks[0] as { text: string }).text.split('\n');
+  };
+
+  const vote = (start_date: string) => ({
+    id: 'ocd-vote/1',
+    motion_text: 'Third Reading',
+    start_date,
+    result: 'pass',
+    identifier: 'HV-12',
+    counts: [{ option: 'yes', value: 60 }],
+    votes: [],
+  });
+
+  const action = (date: string) => ({
+    description: 'Introduced',
+    date,
+    classification: [],
+    order: 1,
+    organization: { name: 'House', classification: 'lower' },
+  });
+
+  it('drops the vote-date parenthetical when start_date is empty', () => {
+    const lines = renderLines({ votes: [vote('')] });
+    expect(lines).toContain('### Third Reading');
+    expect(lines.join('\n')).not.toContain('()');
+  });
+
+  it('keeps the vote-date parenthetical when start_date is present', () => {
+    expect(renderLines({ votes: [vote('2025-03-01')] })).toContain(
+      '### Third Reading (2025-03-01)',
+    );
+  });
+
+  it('drops the action date and its separator space when date is empty', () => {
+    expect(renderLines({ actions: [action('')] })).toContain('- #1: Introduced — House (lower)');
+  });
+
+  it('keeps the action date when present', () => {
+    expect(renderLines({ actions: [action('2025-01-14')] })).toContain(
+      '- #1 2025-01-14: Introduced — House (lower)',
+    );
   });
 });

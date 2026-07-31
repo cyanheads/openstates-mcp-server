@@ -7,7 +7,8 @@ import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getJurisdiction } from '@/mcp-server/tools/definitions/get-jurisdiction.tool.js';
 
-vi.mock('@/services/openstates/openstates-service.js', () => ({
+vi.mock('@/services/openstates/openstates-service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/openstates/openstates-service.js')>()),
   getOpenStatesApiService: vi.fn(),
 }));
 
@@ -171,5 +172,71 @@ describe('getJurisdiction — include enrichment surfacing (organizations, lates
     expect(text).toContain('2025-05-19T02:00:00Z');
     expect(text).toContain('2025-05-19T02:08:00Z');
     expect(text).toContain('success');
+  });
+});
+
+/**
+ * Regression coverage for issue #43. `classification`, `start_date`, and `end_date` on a
+ * legislative session are required, non-nullable strings, and Open States sends `""` on sessions
+ * it never finished scraping (Missouri 2018 has a start and no end; Alaska 27 has none of the
+ * three), which left an empty parenthetical, a trailing en dash, or a bare separator. An absent
+ * endpoint means unknown, not open-ended — every observed case is a long-concluded session — so
+ * the rendering states only the endpoint upstream gave and never substitutes "present". All four
+ * endpoint combinations are pinned; the fully-populated one must stay byte-identical to what
+ * shipped before the guard. structuredContent is unaffected: `""` is the accurate upstream value
+ * and stays.
+ */
+describe('getJurisdiction — sessions with an empty classification or date (issue #43)', () => {
+  const render = (session: {
+    identifier: string;
+    name: string;
+    classification: string;
+    start_date: string;
+    end_date: string;
+  }) => {
+    const blocks = getJurisdiction.format!({
+      ...mockJurisdiction,
+      legislative_sessions: [session],
+    });
+    return (blocks[0] as { text: string }).text;
+  };
+
+  const session = {
+    identifier: '2018',
+    name: '2018 Regular Session',
+    classification: 'primary',
+    start_date: '2017-12-01',
+    end_date: '2018-05-18',
+  };
+  const head = '- `2018` — 2018 Regular Session (primary)';
+
+  it('renders both endpoints as a dash range, unchanged', () => {
+    expect(render(session).split('\n')).toContain(`${head} 2017-12-01–2018-05-18`);
+  });
+
+  it('renders a start with no end as "from", with no trailing dash', () => {
+    expect(render({ ...session, end_date: '' }).split('\n')).toContain(`${head} from 2017-12-01`);
+  });
+
+  it('renders an end with no start as "until", with no leading dash', () => {
+    expect(render({ ...session, start_date: '' }).split('\n')).toContain(
+      `${head} until 2018-05-18`,
+    );
+  });
+
+  it('omits the range entirely when neither endpoint is present', () => {
+    expect(render({ ...session, start_date: '', end_date: '' }).split('\n')).toContain(head);
+  });
+
+  it('drops the classification parenthetical when classification is empty', () => {
+    const text = render({
+      identifier: '27',
+      name: '27th Legislature (2011-2012)',
+      classification: '',
+      start_date: '',
+      end_date: '2012-04-15',
+    });
+    expect(text.split('\n')).toContain('- `27` — 27th Legislature (2011-2012) until 2012-04-15');
+    expect(text).not.toContain('()');
   });
 });
