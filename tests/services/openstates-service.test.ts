@@ -487,6 +487,54 @@ describe('searchPeople — other classifications are untouched', () => {
   });
 });
 
+/**
+ * `/people` takes `id` as a repeatable parameter and has no `/people/{id}` detail route, so the
+ * repetition is the whole lookup mechanism: verified against the live API, `?id=A&id=B` returns
+ * both people while `?id=A,B` returns none. A serialization that collapsed the array into one
+ * comma-joined value would therefore fail silently — HTTP 200 with an empty page — so the shape of
+ * the outgoing query is what has to be pinned, not just that the parameter is present.
+ */
+describe('searchPeople — id lookup', () => {
+  let svc: OpenStatesApiService;
+  let requests: URLSearchParams[];
+  let ctx: Context;
+
+  beforeEach(() => {
+    requests = stubPeopleEndpoint();
+    svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    ctx = createMockContext({ tenantId: 'test-tenant' });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sends one id parameter per person, not a comma-joined value', async () => {
+    const ids = ['ocd-person/aaa', 'ocd-person/bbb', 'ocd-person/ccc'];
+    await svc.searchPeople({ id: ids, page: 1, per_page: 10 }, ctx);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.getAll('id')).toEqual(ids);
+  });
+
+  it('issues no jurisdiction parameter when the lookup carries only ids', async () => {
+    await svc.searchPeople({ id: ['ocd-person/aaa'], page: 1, per_page: 10 }, ctx);
+    expect(requests[0]?.has('jurisdiction')).toBe(false);
+  });
+
+  it('sends both when an id lookup is scoped to a jurisdiction', async () => {
+    await svc.searchPeople(
+      { jurisdiction: 'wa', id: ['ocd-person/aaa'], page: 1, per_page: 10 },
+      ctx,
+    );
+    expect(requests[0]?.get('jurisdiction')).toBe('wa');
+    expect(requests[0]?.getAll('id')).toEqual(['ocd-person/aaa']);
+  });
+
+  it('omits id entirely from a plain jurisdiction search', async () => {
+    await svc.searchPeople({ jurisdiction: 'wa', page: 1, per_page: 10 }, ctx);
+    expect(requests[0]?.has('id')).toBe(false);
+  });
+});
+
 // --------------------------------------------------------------------------
 // normalizePerson — include enrichment survives normalization (issue #18)
 // --------------------------------------------------------------------------

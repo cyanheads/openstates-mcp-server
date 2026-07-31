@@ -11,7 +11,7 @@ Annotations on every tool: `readOnlyHint: true`, `idempotentHint: true`, `openWo
 |:-----|:------------|:-----------|:------------|
 | `openstates_search_bills` | Search bills by full-text query or jurisdiction/session/filter combination. | `jurisdiction`, `q`, `session`, `chamber`, `subject`, `sponsor`, `sort`, `include` | readOnly, idempotent, openWorld |
 | `openstates_get_bill` | Fetch full bill detail including actions, sponsorships, votes, documents, and versions. | `jurisdiction`, `session`, `bill_id` (or `openstates_id`) | readOnly, idempotent, openWorld |
-| `openstates_search_people` | Search legislators by name, jurisdiction, chamber, or district. | `jurisdiction`, `name`, `org_classification`, `district`, `include` | readOnly, idempotent, openWorld |
+| `openstates_search_people` | Search legislators by name, jurisdiction, chamber, or district, or fetch specific people by OCD person ID. | `jurisdiction`, `id`, `name`, `org_classification`, `district`, `include` | readOnly, idempotent, openWorld |
 | `openstates_get_legislators_by_location` | Find legislators representing a given lat/lng coordinate. | `lat`, `lng`, `include` | readOnly, idempotent, openWorld |
 | `openstates_search_committees` | List committees for a jurisdiction, optionally filtered by chamber or parent. **Experimental — not all states have committee data.** | `jurisdiction`, `classification`, `chamber`, `include` | readOnly, idempotent, openWorld |
 | `openstates_get_committee` | Fetch committee detail including membership roster. **Experimental — not all states have committee data.** | `committee_id` | readOnly, idempotent, openWorld |
@@ -73,7 +73,7 @@ An MCP server wrapping the [Open States API v3](https://v3.openstates.org/) — 
 | Noun | Operations Available | API Endpoint |
 |:-----|:--------------------|:-------------|
 | Bill | search (full-text + filters), get-by-path, get-by-ocd-id | `GET /bills`, `GET /bills/{jur}/{session}/{id}`, `GET /bills/ocd-bill/{id}` |
-| Person | search (name/jurisdiction/chamber/district), geo-lookup | `GET /people`, `GET /people.geo` |
+| Person | search (name/jurisdiction/chamber/district), lookup by ID, geo-lookup | `GET /people`, `GET /people.geo` |
 | Committee | list/search, get-by-id | `GET /committees`, `GET /committees/{id}` |
 | Event | list/search (jurisdiction + date range), get-by-id | `GET /events`, `GET /events/{id}` |
 | Jurisdiction | list, get-by-id | `GET /jurisdictions`, `GET /jurisdictions/{id}` |
@@ -261,12 +261,14 @@ errors: [
 
 ### 3. `openstates_search_people`
 
-**Description:** Search state legislators and officials by name, jurisdiction, chamber, or district. Party is reported on every result but is not a filter — `/people` has no `party` query parameter. Supports name substring matching. Use `org_classification` to target a role type. Returns compact person records; use `include=offices` to get contact information, `include=links` for social/website links.
+**Description:** Search state legislators and officials by name, jurisdiction, chamber, or district, or fetch specific people by OCD person ID. Party is reported on every result but is not a filter — `/people` has no `party` query parameter. Supports name substring matching. Use `org_classification` to target a role type. Returns compact person records; use `include=offices` to get contact information, `include=links` for social/website links.
 
-**Input schema:**
+**Input schema:** either `jurisdiction` or `id` is required — enforced by a cross-field refinement on the input object, so a call carrying neither fails input validation.
+
 | Param | Type | Description |
 |:------|:-----|:------------|
-| `jurisdiction` | `string` required (`.min(1)`) | State name or OCD-ID. An unscoped search spans all 56 jurisdictions and exceeds the upstream timeout, so the schema rejects a call that omits it. |
+| `jurisdiction` | `string` optional (`.min(1)`) | State name or OCD-ID. Required unless `id` is provided — an unscoped search spans all 56 jurisdictions and exceeds the upstream timeout. |
+| `id` | `array(string)` optional (`.min(1)`) | OCD person IDs, sent as one repeated `id=` parameter per entry. Required unless `jurisdiction` is provided: it bounds the query by naming records rather than by scanning one, so it needs no jurisdiction alongside it. |
 | `name` | `string` optional | Name or partial name to match (case-insensitive substring). |
 | `org_classification` | `z.enum(['legislature', 'executive', 'lower', 'upper', 'government'])` optional | Filter by role type. `upper` = Senate/upper chamber; `lower` = House/lower chamber; `executive` = governors and executive officials; `legislature` = every legislator, resolved server-side to the `upper` + `lower` union (see below). Omitting the filter returns every officeholder, executive included — not equivalent to `legislature`. |
 | `district` | `string` optional | District label (e.g., `"1"`, `"37"`, `"At-Large"`). District formats vary by state. |
@@ -308,6 +310,16 @@ errors: [
 // Empty results are NOT an error — return results: [] with pagination.
 // Only throw for invalid inputs or upstream failures.
 ```
+
+**Decision — person IDs are resolved by a filter on this tool, not by a `get_person` tool.** Person
+IDs leave the server through three surfaces — search results, `get_bill` sponsorships, and
+`get_committee` memberships — and upstream offers no `/people/{id}` detail route to feed them back
+into (verified: it answers 404). `/people` takes `id` as a repeatable query parameter instead —
+`?id=A&id=B` returns both people, `?id=A,B` returns none — so the batch is the upstream's own shape
+and a per-ID detail tool would wrap the same filter one ID at a time while losing it. An unknown or
+malformed ID is HTTP 200 with zero rows rather than an error, and an ID paired with a jurisdiction
+that person does not belong to matches nothing, so the empty-result notice names both cases when
+`id` is set.
 
 **Decision — `legislature` is a server-side union, not a passthrough.** Upstream accepts
 `org_classification=legislature` (it is in the API's own `OrgClassification` enum) but matches
@@ -904,3 +916,5 @@ GET /bills?jurisdiction=wa&include=sponsorships&include=actions
 | 19 | `search_people` drops the advertised `party` filter from its description instead of gaining one | The description had claimed a `party` filter since before the schema was written, and no such input ever existed — a model constructing `party` had it silently dropped and got an unfiltered page back. Upstream `/people` takes no `party` parameter, so a real filter would have to run over the fetched page, which desyncs the reported `max_page` from what the caller receives. Withdrawing an unimplemented claim is the honest fix; the filter is a separate feature with a pagination decision attached. `party` stays in the output schema — it is a genuine per-record field. | 2026-07-31 |
 | 20 | Test files stub the service accessor through `importOriginal` rather than replacing the module | A one-key `vi.mock` factory *is* the module for that file, so every other export of `openstates-service.ts` arrives as `undefined` and any second symbol a definition imports throws at call time — across all eighteen files at once, with a `TypeError` naming the symbol rather than the mock. Spreading the real module and overriding only `getOpenStatesApiService` keeps existing `vi.mocked(...)` assertions intact while leaving the module's other exports reachable. | 2026-07-31 |
 | 21 | An empty required string is rendered by omitting its punctuation, never by substituting a placeholder | Open States sends `""` for fields typed as required non-nullable strings — abstract/version/document `note`, version/document `date`, `VoteEvent.start_date`, `BillAction.date`, and a legislative session's `classification`, `start_date`, and `end_date` — so `""` passes output validation and reaches `format()` intact. Each segment therefore composes as a suffix carrying its own separator, and the session range selects a whole value across four cases (`start–end`, `from start`, `until end`, omitted). An absent session endpoint renders as `from`/`until` rather than `–present` or `(ongoing)`: every session Open States leaves without an end date concluded years ago, so the empty value is a scrape gap and a "present" marker would assert something the API never said. `structuredContent` is untouched throughout — `""` is the accurate upstream value. | 2026-07-31 |
+| 22 | `search_people` takes `jurisdiction` **or** `id`, enforced by a cross-field refinement — narrowing decision 18 for this one tool | Decision 18 made `jurisdiction` unconditional because an unscoped search scans all 56 jurisdictions and exceeds the upstream timeout. An `id` lookup does not scan — it names records — so it bounds the query on its own, and since `/people` has no per-person detail route it is the only way to resolve the person IDs this server already emits. The rule stays in the schema rather than returning to the handler guard decision 18 removed: a `.refine()` on the input object keeps the rejection an input-validation error carrying the message `Either jurisdiction or id is required.`, the same shape `search_bills` uses for `jurisdiction`-or-`q`. What decision 18 bought and this gives back is the machine-readable half — `required` takes one field list, not a choice, so neither field appears in it and a schema-reading client learns the rule from the tool description. A top-level `anyOf` of `required` lists could carry it in JSON Schema, and is deliberately not used: strict function-calling bridges reject a top-level `anyOf`, which would cost tool registration for those clients to document a constraint the schema still enforces. | 2026-07-31 |
+| 23 | Fields that arrive as `""` say so in `.describe()`; their types are left alone | Decision 21 fixed how an empty required string *renders*; a client reading `structuredContent` never sees that rendering, and `{"date": ""}` under a description reading `Version date.` is indistinguishable from a malformed record or a dropped field. Every output field Open States sends empty — or that this server's normalization substitutes `''` for when a key is absent — now documents the empty case, with a figure where the rate is high enough to act on (`LegislativeSession.classification` is empty on 299 of 1076 sessions, and 13 jurisdictions carry one on no session at all). Session endpoints additionally say an absent date is unknown rather than ongoing, since every observed one belongs to a session that concluded years ago. Widening the fields to `.nullable()`/`.optional()` and normalizing `""` away was rejected: it discards the difference between a value upstream left blank and a key it never sent, and breaks every client parsing the current contract to fix what is a documentation gap. | 2026-07-31 |

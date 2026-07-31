@@ -1,5 +1,6 @@
 /**
- * @fileoverview Search state legislators and officials by name, jurisdiction, chamber, or district.
+ * @fileoverview Search state legislators and officials by name, jurisdiction, chamber, or district,
+ * or fetch specific people by OCD person ID.
  * @module mcp-server/tools/definitions/search-people
  */
 
@@ -18,46 +19,67 @@ const PersonIncludeEnum = z.enum([
 export const searchPeople = tool('openstates_search_people', {
   title: 'Search People',
   description:
-    'Search state legislators and officials by name, jurisdiction, chamber, or district. Party is reported on every result but cannot be filtered on — narrow by party after the call. jurisdiction is required — a search spanning all 56 jurisdictions exceeds the upstream timeout, including a name-only one, so scope every call to a single state. Use openstates_list_jurisdictions to pick one, or openstates_get_legislators_by_location when you have coordinates but no state. Supports name substring matching (case-insensitive). org_classification targets a role type: "upper" for Senate, "lower" for House/Assembly, "executive" for governors and executive officials, and "legislature" for every legislator — both chambers merged into one paginated set (all upper members, then all lower), which excludes executive-branch officials. Omitting org_classification is not the same as "legislature": it returns every officeholder, executive officials included. include=offices adds phone, fax, and address. include=links adds website and social links.',
+    'Search state legislators and officials by name, jurisdiction, chamber, or district, or fetch specific people by OCD person ID. Party is reported on every result but cannot be filtered on — narrow by party after the call. Either jurisdiction or id is required — a search spanning all 56 jurisdictions exceeds the upstream timeout, including a name-only one, so scope every call to a single state or to specific person IDs. Use openstates_list_jurisdictions to pick a jurisdiction, or openstates_get_legislators_by_location when you have coordinates but no state. id takes the person IDs that openstates_get_bill sponsorships and openstates_get_committee memberships hand back, and resolves any number of them in one call. Supports name substring matching (case-insensitive). org_classification targets a role type: "upper" for Senate, "lower" for House/Assembly, "executive" for governors and executive officials, and "legislature" for every legislator — both chambers merged into one paginated set (all upper members, then all lower), which excludes executive-branch officials. Omitting org_classification is not the same as "legislature": it returns every officeholder, executive officials included. include=offices adds phone, fax, and address. include=links adds website and social links.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
-  input: z.object({
-    jurisdiction: z
-      .string()
-      .min(1)
-      .describe(
-        'State name, abbreviation, or OCD-ID. Required — an all-states search exceeds the upstream timeout, so every call must be scoped to a single jurisdiction.',
-      ),
-    name: z
-      .string()
-      .optional()
-      .describe(
-        'Name or partial name to match (case-insensitive substring). Narrows within the jurisdiction; it does not substitute for one.',
-      ),
-    org_classification: z
-      .enum(['legislature', 'executive', 'lower', 'upper', 'government'])
-      .optional()
-      .describe(
-        'Filter by role type. "upper" = Senate, "lower" = House/Assembly, "executive" = governors and executive officials, "legislature" = every legislator (both chambers merged into one paginated set, all upper members then all lower, excluding executive officials). Omitting this filter returns every officeholder including executive ones — it is not equivalent to "legislature".',
-      ),
-    district: z
-      .string()
-      .optional()
-      .describe('District label (e.g., "1", "37", "At-Large"). Formats vary by state.'),
-    include: z
-      .array(PersonIncludeEnum)
-      .optional()
-      .describe(
-        'Related data to inline. "offices" includes phone, fax, and address. "links" includes website and social links. "other_names" includes alternate/former names, "other_identifiers" cross-system IDs, and "sources" the provenance URLs behind the record.',
-      ),
-    page: z.coerce.number().int().min(1).default(1).describe('Page number (1-indexed).'),
-    per_page: z.coerce
-      .number()
-      .int()
-      .min(1)
-      .max(20)
-      .default(10)
-      .describe('Results per page. Maximum 20.'),
-  }),
+  input: z
+    .object({
+      jurisdiction: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          'State name, abbreviation, or OCD-ID. Required unless id is provided — an all-states search exceeds the upstream timeout, so every call must be scoped to a single jurisdiction or to specific person IDs.',
+        ),
+      id: z
+        .array(z.string().min(1))
+        .min(1)
+        .optional()
+        .describe(
+          'OCD person IDs (e.g., "ocd-person/9eddb3cd-868e-42ba-831a-b415fd7ed445"). Required unless jurisdiction is provided — it returns exactly these people, so it scopes the call on its own and needs no jurisdiction alongside it. Resolves the IDs that openstates_search_people results, openstates_get_bill sponsorships[].person.id, and openstates_get_committee memberships[].person_id hand back — any number of them in one call, subject to per_page. An ID Open States does not know matches nothing rather than failing, as does an ID paired with a jurisdiction that person does not belong to.',
+        ),
+      name: z
+        .string()
+        .optional()
+        .describe(
+          'Name or partial name to match (case-insensitive substring). Narrows within the jurisdiction; it does not substitute for one.',
+        ),
+      org_classification: z
+        .enum(['legislature', 'executive', 'lower', 'upper', 'government'])
+        .optional()
+        .describe(
+          'Filter by role type. "upper" = Senate, "lower" = House/Assembly, "executive" = governors and executive officials, "legislature" = every legislator (both chambers merged into one paginated set, all upper members then all lower, excluding executive officials). Omitting this filter returns every officeholder including executive ones — it is not equivalent to "legislature".',
+        ),
+      district: z
+        .string()
+        .optional()
+        .describe('District label (e.g., "1", "37", "At-Large"). Formats vary by state.'),
+      include: z
+        .array(PersonIncludeEnum)
+        .optional()
+        .describe(
+          'Related data to inline. "offices" includes phone, fax, and address. "links" includes website and social links. "other_names" includes alternate/former names, "other_identifiers" cross-system IDs, and "sources" the provenance URLs behind the record.',
+        ),
+      page: z.coerce.number().int().min(1).default(1).describe('Page number (1-indexed).'),
+      per_page: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(20)
+        .default(10)
+        .describe('Results per page. Maximum 20.'),
+    })
+    /**
+     * `jurisdiction` or `id`, the same either/or `openstates_search_bills` carries for
+     * `jurisdiction` or `q`. An unscoped query spans all 56 jurisdictions and exceeds the upstream
+     * timeout, which is why `jurisdiction` was unconditional; an `id` lookup addresses named
+     * records instead of scanning, so it bounds the query on its own. A cross-field refinement is
+     * the only schema-level form of that rule — JSON Schema `required` takes one field list, not a
+     * choice between two — and keeping it in the schema rather than in the handler keeps the
+     * rejection an input-validation error, as it is for every other constraint on this tool.
+     */
+    .refine((input) => input.jurisdiction !== undefined || input.id !== undefined, {
+      message: 'Either jurisdiction or id is required.',
+    }),
   output: z.object({
     results: z
       .array(
@@ -92,10 +114,16 @@ export const searchPeople = tool('openstates_search_people', {
                 name: z.string().describe('Jurisdiction name.'),
               })
               .describe('Home jurisdiction.'),
-            given_name: z.string().describe('Given (first) name.'),
-            family_name: z.string().describe('Family (last) name.'),
+            given_name: z
+              .string()
+              .describe('Given (first) name. Empty string when Open States recorded none.'),
+            family_name: z
+              .string()
+              .describe('Family (last) name. Empty string when Open States recorded none.'),
             email: z.string().describe('Email address. Empty string when not available.'),
-            openstates_url: z.string().describe('Open States profile URL.'),
+            openstates_url: z
+              .string()
+              .describe('Open States profile URL. Empty string when Open States recorded none.'),
             image: z
               .string()
               .optional()
@@ -119,7 +147,11 @@ export const searchPeople = tool('openstates_search_people', {
                 z
                   .object({
                     url: z.string().describe('Link URL.'),
-                    note: z.string().describe('Link description (e.g., "website", "twitter").'),
+                    note: z
+                      .string()
+                      .describe(
+                        'Link description (e.g., "website", "twitter"). Empty string when Open States recorded no description — common on person links.',
+                      ),
                   })
                   .describe('External link record.'),
               )
@@ -130,7 +162,11 @@ export const searchPeople = tool('openstates_search_people', {
                 z
                   .object({
                     name: z.string().describe('Alternate or former name.'),
-                    note: z.string().describe('Note describing the alternate name.'),
+                    note: z
+                      .string()
+                      .describe(
+                        'Note describing the alternate name. Empty string when Open States recorded no note.',
+                      ),
                   })
                   .describe('Alternate name record.'),
               )
@@ -152,7 +188,9 @@ export const searchPeople = tool('openstates_search_people', {
                 z
                   .object({
                     url: z.string().describe('Source URL.'),
-                    note: z.string().describe('Source note.'),
+                    note: z
+                      .string()
+                      .describe('Source note. Empty string when Open States recorded no note.'),
                   })
                   .describe('Source record.'),
               )
@@ -183,6 +221,10 @@ export const searchPeople = tool('openstates_search_people', {
     appliedFilters: z
       .object({
         jurisdiction: z.string().optional().describe('Jurisdiction filter as received.'),
+        id: z
+          .array(z.string())
+          .optional()
+          .describe('Person IDs filtered on, as received. Absent when none were supplied.'),
         name: z.string().optional().describe('Name filter as received.'),
         org_classification: z.string().optional().describe('Role-type filter as received.'),
         district: z.string().optional().describe('District filter as received.'),
@@ -221,6 +263,7 @@ export const searchPeople = tool('openstates_search_people', {
       .searchPeople(
         {
           jurisdiction: input.jurisdiction,
+          id: input.id,
           name: input.name,
           org_classification: input.org_classification,
           district: input.district,
@@ -241,6 +284,7 @@ export const searchPeople = tool('openstates_search_people', {
 
     ctx.log.info('Searched people', {
       jurisdiction: input.jurisdiction,
+      idCount: input.id?.length,
       count: result.results.length,
       total: result.pagination.total_items,
     });
@@ -251,6 +295,7 @@ export const searchPeople = tool('openstates_search_people', {
       maxPage: result.pagination.max_page,
       appliedFilters: {
         jurisdiction: input.jurisdiction,
+        id: input.id,
         name: input.name,
         org_classification: input.org_classification,
         district: input.district,
@@ -260,14 +305,20 @@ export const searchPeople = tool('openstates_search_people', {
     });
 
     if (result.results.length === 0) {
-      const filters: string[] = [`jurisdiction="${input.jurisdiction}"`];
+      const filters: string[] = [];
+      if (input.jurisdiction) filters.push(`jurisdiction="${input.jurisdiction}"`);
+      if (input.id) filters.push(`id=${JSON.stringify(input.id)}`);
       if (input.name) filters.push(`name="${input.name}"`);
       if (input.org_classification)
         filters.push(`org_classification="${input.org_classification}"`);
       if (input.district) filters.push(`district="${input.district}"`);
-      ctx.enrich.notice(
-        `No legislators matched ${filters.join(', ')}. Try broadening the name filter, checking the jurisdiction, or removing the district filter.`,
-      );
+      // An ID query fails differently from a filter query: there is nothing to broaden, and
+      // upstream answers an unknown ID with zero rows rather than an error, so the two ways an ID
+      // yields nothing are the only ones worth naming.
+      const hint = input.id
+        ? 'Open States answers an ID it does not know with zero rows rather than an error, and an ID paired with a jurisdiction that person does not belong to matches nothing either. Re-check the ID against the tool that emitted it, or drop the jurisdiction filter.'
+        : 'Try broadening the name filter, checking the jurisdiction, or removing the district filter.';
+      ctx.enrich.notice(`No legislators matched ${filters.join(', ')}. ${hint}`);
     }
 
     return { results: result.results, pagination: result.pagination };

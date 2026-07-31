@@ -93,6 +93,34 @@ describe('searchPeople — filters forwarded to service', () => {
     });
   });
 
+  it('forwards id to the service as the array upstream repeats, jurisdiction absent', async () => {
+    const ctx = createMockContext();
+    const ids = ['ocd-person/abc123', 'ocd-person/def456'];
+    const input = searchPeople.input.parse({ id: ids });
+    await searchPeople.handler(input, ctx);
+    expect(mockService.searchPeople).toHaveBeenCalledWith(
+      expect.objectContaining({ id: ids, jurisdiction: undefined }),
+      expect.anything(),
+    );
+  });
+
+  it('forwards id alongside a jurisdiction when both are given', async () => {
+    const ctx = createMockContext();
+    const input = searchPeople.input.parse({ jurisdiction: 'wa', id: ['ocd-person/abc123'] });
+    await searchPeople.handler(input, ctx);
+    expect(mockService.searchPeople).toHaveBeenCalledWith(
+      expect.objectContaining({ jurisdiction: 'wa', id: ['ocd-person/abc123'] }),
+      expect.anything(),
+    );
+  });
+
+  it('echoes id in the applied filters', async () => {
+    const ctx = createMockContext();
+    const input = searchPeople.input.parse({ id: ['ocd-person/abc123'] });
+    await searchPeople.handler(input, ctx);
+    expect(getEnrichment(ctx).appliedFilters).toMatchObject({ id: ['ocd-person/abc123'] });
+  });
+
   it('passes page and per_page to service', async () => {
     const ctx = createMockContext();
     const input = searchPeople.input.parse({ jurisdiction: 'wa', page: 2, per_page: 5 });
@@ -131,6 +159,41 @@ describe('searchPeople — filters forwarded to service', () => {
     const result = await searchPeople.handler(input, ctx);
     expect(result.results[0].links).toBeDefined();
     expect(result.results[0].links?.[0].url).toBe('https://rep.example.com');
+  });
+});
+
+/**
+ * An ID lookup that matches nothing fails differently from a filter search: Open States answers an
+ * ID it does not know with HTTP 200 and zero rows, so there is no upstream error to surface and
+ * nothing to broaden. The notice has to name the two ways that happens instead of telling the
+ * caller to loosen filters they never set.
+ */
+describe('searchPeople — empty result for an id lookup', () => {
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    vi.mocked(getOpenStatesApiService).mockReturnValue({
+      searchPeople: vi.fn().mockResolvedValue({
+        results: [],
+        pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
+      }),
+    } as never);
+  });
+
+  it('names the ID and the two ways it matches nothing', async () => {
+    const ctx = createMockContext();
+    const input = searchPeople.input.parse({ id: ['ocd-person/unknown'] });
+    await searchPeople.handler(input, ctx);
+    const { notice } = getEnrichment(ctx);
+    expect(notice).toContain('ocd-person/unknown');
+    expect(notice).toContain('zero rows');
+    expect(notice).toContain('jurisdiction');
+  });
+
+  it('omits the jurisdiction clause entirely when none was supplied', async () => {
+    const ctx = createMockContext();
+    const input = searchPeople.input.parse({ id: ['ocd-person/unknown'] });
+    await searchPeople.handler(input, ctx);
+    expect(getEnrichment(ctx).notice).not.toContain('jurisdiction="');
   });
 });
 

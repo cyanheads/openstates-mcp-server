@@ -365,6 +365,12 @@ export interface BillSearchParams {
 
 export interface PeopleSearchParams {
   district?: string | undefined;
+  /**
+   * OCD person IDs. Upstream `/people` takes `id` as a repeatable parameter and has no
+   * `/people/{id}` detail route, so this is the only direct lookup path — the array is sent as one
+   * `id=` pair per entry (a comma-joined single value matches nothing).
+   */
+  id?: string[] | undefined;
   include?: string[] | undefined;
   jurisdiction?: string | undefined;
   name?: string | undefined;

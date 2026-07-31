@@ -58,18 +58,42 @@ describe('searchPeople', () => {
 
   /**
    * `GET /people` with no jurisdiction — and `GET /people?name=…` alone — sits on the upstream
-   * gateway for its full ~60s window and answers 504, so an unscoped search cannot complete. The
-   * requirement used to live only in the handler, which left `tools/list` advertising
-   * `required: []`; it is now a schema constraint, so the invalid call is unconstructible.
+   * gateway for its full ~60s window and answers 504, so an unscoped *search* cannot complete. An
+   * `id` lookup addresses named records instead of scanning, so it bounds the query on its own and
+   * satisfies the same requirement. The rule is a schema refinement rather than a handler guard, so
+   * a call carrying neither is rejected during input validation and never reaches upstream.
    */
-  describe('jurisdiction is required by the input schema (issue #35)', () => {
-    it('advertises jurisdiction in the JSON Schema required list', () => {
-      const jsonSchema = z.toJSONSchema(searchPeople.input) as { required?: string[] };
-      expect(jsonSchema.required).toContain('jurisdiction');
+  describe('scope is required by the input schema: jurisdiction or id', () => {
+    it('accepts a jurisdiction alone', () => {
+      expect(searchPeople.input.safeParse({ jurisdiction: 'wa' }).success).toBe(true);
     });
 
-    it('rejects an omitted jurisdiction', () => {
-      expect(searchPeople.input.safeParse({}).success).toBe(false);
+    it('accepts an id alone, with no jurisdiction', () => {
+      expect(searchPeople.input.safeParse({ id: ['ocd-person/abc123'] }).success).toBe(true);
+    });
+
+    it('accepts both together', () => {
+      const parsed = searchPeople.input.safeParse({
+        jurisdiction: 'wa',
+        id: ['ocd-person/abc123'],
+      });
+      expect(parsed.success).toBe(true);
+    });
+
+    it('rejects a call carrying neither, naming both fields', () => {
+      const parsed = searchPeople.input.safeParse({});
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.issues[0]?.message).toBe('Either jurisdiction or id is required.');
+    });
+
+    /**
+     * The rejection is a validation issue on the object itself, not a thrown handler error — which
+     * is what keeps it an input-validation failure the caller sees before any upstream request.
+     */
+    it('raises the rejection as a schema issue at the object root', () => {
+      const issue = searchPeople.input.safeParse({}).error?.issues[0];
+      expect(issue?.code).toBe('custom');
+      expect(issue?.path).toEqual([]);
     });
 
     it('rejects a name-only search — a name does not scope the all-states query', () => {
@@ -80,8 +104,31 @@ describe('searchPeople', () => {
       expect(searchPeople.input.safeParse({ jurisdiction: '' }).success).toBe(false);
     });
 
-    it('no longer declares a jurisdiction_required reason — the schema owns the constraint', () => {
+    it('rejects an empty id array — it names no records, so it scopes nothing', () => {
+      expect(searchPeople.input.safeParse({ id: [] }).success).toBe(false);
+    });
+
+    it('rejects an empty-string person ID', () => {
+      expect(searchPeople.input.safeParse({ id: [''] }).success).toBe(false);
+    });
+
+    it('declares no jurisdiction_required reason — the schema owns the constraint', () => {
       expect(searchPeople.errors?.map((e) => e.reason)).not.toContain('jurisdiction_required');
+    });
+
+    /**
+     * The cost of the either/or: `required` takes one field list, so neither field can appear in
+     * it once either satisfies the rule. The constraint stays in the schema, but a client reading
+     * only `required` no longer sees it — the same trade `openstates_search_bills` makes for
+     * `jurisdiction`-or-`q`, which is why both tools state the rule in their description.
+     */
+    it('carries neither field in the JSON Schema required list', () => {
+      const { required = [] } = z.toJSONSchema(searchPeople.input, { io: 'input' }) as {
+        required?: string[];
+      };
+      expect(required).not.toContain('jurisdiction');
+      expect(required).not.toContain('id');
+      expect(searchPeople.description).toContain('Either jurisdiction or id is required');
     });
   });
 

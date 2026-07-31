@@ -590,6 +590,9 @@ export class OpenStatesApiService {
   ): Promise<PersonListResponse> {
     const queryParams: Record<string, unknown> = {
       jurisdiction: params.jurisdiction,
+      // `buildUrl` appends one pair per array entry, which is the repeatable form `/people?id=`
+      // requires — the endpoint matches nothing for a comma-joined list.
+      id: params.id,
       name: params.name,
       org_classification: params.org_classification,
       district: params.district,
@@ -600,6 +603,7 @@ export class OpenStatesApiService {
     const url = this.buildUrl('/people', queryParams);
     ctx.log.debug('Searching people', {
       jurisdiction: params.jurisdiction,
+      idCount: params.id?.length,
       org_classification: params.org_classification,
       page: params.page ?? 1,
     });

@@ -31,7 +31,7 @@
 |:---|:---|
 | `openstates_search_bills` | Search state legislative bills across all covered US jurisdictions with full-text search, jurisdiction/session filtering, subject tags, and sponsor lookups |
 | `openstates_get_bill` | Fetch full detail for a specific bill by OCD ID or three-part path (jurisdiction + session + bill_id) |
-| `openstates_search_people` | Search state legislators and officials within a jurisdiction by name, chamber, or district |
+| `openstates_search_people` | Search state legislators and officials within a jurisdiction by name, chamber, or district, or fetch specific people by OCD person ID |
 | `openstates_get_legislators_by_location` | Find every legislator representing a geographic coordinate (latitude/longitude) — state legislators and the federal delegation |
 | `openstates_search_committees` | List committees for a jurisdiction (experimental — not all states have coverage) |
 | `openstates_get_committee` | Fetch committee detail by OCD organization ID, with optional membership roster |
@@ -70,9 +70,10 @@ Fetch complete bill detail by OCD ID or path lookup.
 
 ### `openstates_search_people`
 
-Search legislators and officials within one jurisdiction by name, chamber, or district.
+Search legislators and officials within one jurisdiction by name, chamber, or district, or fetch specific people by OCD person ID.
 
-- `jurisdiction` is required by the input schema — a search spanning all 56 jurisdictions exceeds the upstream timeout, name-only searches included, so a call that omits it fails schema validation. Use `openstates_list_jurisdictions` to pick one, or `openstates_get_legislators_by_location` when you have coordinates but no state
+- Either `jurisdiction` or `id` is required by the input schema — a search spanning all 56 jurisdictions exceeds the upstream timeout, name-only searches included, so a call carrying neither fails schema validation. Use `openstates_list_jurisdictions` to pick a jurisdiction, or `openstates_get_legislators_by_location` when you have coordinates but no state
+- `id` takes OCD person IDs and returns exactly those people, so it needs no jurisdiction alongside it. It resolves the IDs that search results, `openstates_get_bill` sponsorships, and `openstates_get_committee` memberships hand back — several in one call, since upstream `/people` accepts `id` repeatedly and offers no per-person detail route
 - Case-insensitive substring matching on name
 - `org_classification` targets a role type: `upper` (Senate), `lower` (House/Assembly), `executive` (governors and executive officials), `legislature` (every legislator — both chambers merged into one paginated set, all upper members then all lower)
 - Omitting `org_classification` is not equivalent to `legislature` — it returns every officeholder, executive officials included
