@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.2](changelog/0.2.x/0.2.2.md) — 2026-07-31
+
+openstates_search_people can now fetch specific people by OCD person ID, and every output field Open States can send as an empty string now documents that in its .describe().
+
 ## [0.2.1](changelog/0.2.x/0.2.1.md) — 2026-07-31
 
 Bill and legislative-session renderers no longer show orphaned punctuation for upstream fields sent as empty strings; the search_people description no longer claims a party filter that doesn't exist upstream.
