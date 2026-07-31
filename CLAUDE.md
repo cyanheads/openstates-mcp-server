@@ -54,11 +54,23 @@ export const searchBills = tool('openstates_search_bills', {
   title: 'Search Bills',
   description: 'Search state legislative bills across all covered US jurisdictions...',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
-  input: z.object({
-    jurisdiction: z.string().optional().describe('State name, abbreviation, or OCD-ID.'),
-    q: z.string().optional().describe('Full-text search across bill titles, abstracts, and text.'),
-    // ... additional filters
-  }),
+  input: z
+    .object({
+      jurisdiction: z.string().min(1).optional().describe('State name, abbreviation, or OCD-ID.'),
+      q: z
+        .string()
+        .min(1)
+        .optional()
+        .describe('Full-text search across bill titles, abstracts, and text.'),
+      // ... additional filters
+    })
+    // An either/or rule belongs at the schema edge: `required` takes one field list, not a choice
+    // between two, so a cross-field refinement is the only schema-level form of it. The message
+    // carries the recovery guidance — a refinement populates no `data.recovery`.
+    .refine((input) => input.jurisdiction !== undefined || input.q !== undefined, {
+      message:
+        'Either jurisdiction or q is required. Provide a jurisdiction (state name or OCD-ID) or a full-text search term via q, or both.',
+    }),
   output: z.object({
     results: z.array(z.object({ id: z.string().describe('OCD bill ID.'), /* ... */ })).describe('Bills.'),
     pagination: z.object({ total_items: z.number().describe('Total matching bills.'), /* ... */ }).describe('Pagination.'),
@@ -66,19 +78,14 @@ export const searchBills = tool('openstates_search_bills', {
   }),
   errors: [
     {
-      reason: 'missing_scope',
-      code: JsonRpcErrorCode.ValidationError,
-      when: 'Neither jurisdiction nor q was provided.',
-      recovery: 'Provide a jurisdiction or a full-text search term via q, or both.',
+      reason: 'upstream_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Open States did not answer within the per-request timeout — the query is too broad.',
+      recovery: 'Add a jurisdiction, a session, or a date filter, or use a more distinctive q term.',
     },
   ],
 
   async handler(input, ctx) {
-    if (!input.jurisdiction && !input.q) {
-      throw ctx.fail('missing_scope', 'Either jurisdiction or q is required.', {
-        ...ctx.recoveryFor('missing_scope'),
-      });
-    }
     const svc = getOpenStatesApiService();
     const result = await svc.searchBills(input, ctx);
     ctx.log.info('Searched bills', { count: result.results.length });

@@ -45,6 +45,7 @@
 Search state legislative bills with rich filtering and inline related data.
 
 - Full-text search across bill titles, abstracts, and text (`q`)
+- Either `jurisdiction` or `q` is required by the input schema — a call carrying neither fails schema validation, and pairing them is the reliable form, since a `q`-only search spans all 56 jurisdictions and times out upstream for a common term
 - Filter by jurisdiction (state name, two-letter abbreviation, or OCD-ID), session, chamber, classification, subject tags, and sponsor
 - Sort by latest action, first action, or update time — use `sort=latest_action_desc` for bills currently moving through the legislature
 - `include` parameter requests sponsorships, actions, votes, abstracts, versions, and related bills inline — eliminates follow-up `openstates_get_bill` calls for most research workflows
