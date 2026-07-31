@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // helpers internally. Import the class directly so we can construct a
 // lightweight instance without touching env vars.
 import { searchBills } from '@/mcp-server/tools/definitions/search-bills.tool.js';
+import { isKnownJurisdiction } from '@/services/openstates/jurisdiction-inventory.js';
 import {
   cacheKeyForUrl,
   getOpenStatesApiService,
@@ -705,6 +706,60 @@ describe('searchCommittees — jurisdiction normalization', () => {
   it('omits jurisdiction entirely when none is supplied (regression guard)', async () => {
     await svc.searchCommittees({ chamber: 'upper', page: 1, per_page: 10 }, ctx);
     expect(requests.at(-1)?.has('jurisdiction')).toBe(false);
+  });
+});
+
+// --------------------------------------------------------------------------
+// isKnownJurisdiction — local inventory check behind the zero-result diagnosis
+// --------------------------------------------------------------------------
+
+/**
+ * `/bills` answers an unrecognized jurisdiction with HTTP 200 and zero rows — identical to a
+ * genuine no-match — so `search_bills` can only name that cause from a local check. It must accept
+ * all three documented input forms across the whole 56-jurisdiction inventory, and reject a value
+ * that is merely close, or the recovery hint points the caller at the wrong filter.
+ */
+describe('isKnownJurisdiction', () => {
+  it('accepts full display names for states, DC, and territories', () => {
+    expect(isKnownJurisdiction('Washington')).toBe(true);
+    expect(isKnownJurisdiction('District of Columbia')).toBe(true);
+    expect(isKnownJurisdiction('Puerto Rico')).toBe(true);
+    expect(isKnownJurisdiction('United States Virgin Islands')).toBe(true);
+    expect(isKnownJurisdiction('Virgin Islands')).toBe(true);
+  });
+
+  it('accepts two-letter abbreviations', () => {
+    expect(isKnownJurisdiction('wa')).toBe(true);
+    expect(isKnownJurisdiction('dc')).toBe(true);
+    expect(isKnownJurisdiction('mp')).toBe(true);
+  });
+
+  /** The segment differs by kind — `state:` for the 50, `district:` for DC, `territory:` for the 5. */
+  it('accepts OCD-IDs across all three segment forms', () => {
+    expect(isKnownJurisdiction('ocd-jurisdiction/country:us/state:wa/government')).toBe(true);
+    expect(isKnownJurisdiction('ocd-jurisdiction/country:us/district:dc/government')).toBe(true);
+    expect(isKnownJurisdiction('ocd-jurisdiction/country:us/territory:pr/government')).toBe(true);
+  });
+
+  it('normalizes case and surrounding whitespace', () => {
+    expect(isKnownJurisdiction('  TEXAS ')).toBe(true);
+    expect(isKnownJurisdiction('OCD-JURISDICTION/COUNTRY:US/STATE:TX/GOVERNMENT')).toBe(true);
+  });
+
+  it('rejects a value that names no covered jurisdiction', () => {
+    expect(isKnownJurisdiction('notastate')).toBe(false);
+    expect(isKnownJurisdiction('zz')).toBe(false);
+    expect(isKnownJurisdiction('')).toBe(false);
+    expect(isKnownJurisdiction('Ontario')).toBe(false);
+  });
+
+  it('rejects an OCD-ID whose code is not a covered jurisdiction', () => {
+    expect(isKnownJurisdiction('ocd-jurisdiction/country:us/state:zz/government')).toBe(false);
+  });
+
+  /** The federal jurisdiction is real but has no bills in Open States — it is not a bill-search scope. */
+  it('rejects the federal OCD jurisdiction', () => {
+    expect(isKnownJurisdiction('ocd-jurisdiction/country:us/government')).toBe(false);
   });
 });
 

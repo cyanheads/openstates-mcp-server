@@ -149,7 +149,7 @@ The primary entry point. Supports both full-text and structured filtering.
     documents?: BillDocumentOrVersion[];
     related_bills?: RelatedBill[];
     other_titles?: Array<{ title: string; note: string }>;
-    other_identifiers?: Array<{ identifier: string; scheme: string }>;
+    other_identifiers?: Array<{ identifier: string; scheme?: string }>;
     sources?: Array<{ url: string; note: string }>;
   }>;
   pagination: {
@@ -173,7 +173,19 @@ errors: [
 // The API does not validate `session` against the jurisdiction: an unrecognized session and a valid
 // session with zero matches both return 200 with total_items: 0. There is no signal to tell them
 // apart, so a session-filtered empty result gets the empty-result notice, never a throw.
+// An unrecognized `jurisdiction` answers the same way (200, total_items: 0). That one IS separable,
+// but only locally — the empty-result notice checks the value against the covered inventory and
+// names it as the likely cause; the request itself still goes upstream unchanged.
 ```
+
+**Empty-result recovery covers every filter.** `appliedFilters` echoes each parameter the query
+carried — `jurisdiction`, `q`, `session`, `chamber`, `classification`, `subject`, `sponsor`,
+`sponsor_classification`, the three date filters, plus `sort`/`page`/`per_page` — and the notice
+enumerates the subset that narrows the result set from that same record, so the two surfaces cannot
+disagree. `sort`, `page`, and `per_page` are echoed but left out of the notice (none changes which
+bills match), and `include` appears in neither: it selects inline related data rather than
+filtering. Paging past the end is a separate, typed `invalid_page` error, not a zero-result case —
+upstream 404s with the valid range, which the tool surfaces before the notice path is reached.
 
 ---
 
@@ -228,7 +240,7 @@ errors: [
   documents?: Array<{ id: string; note: string; date: string; links: Array<{ url, media_type }> }>;
   related_bills?: Array<{ identifier: string; legislative_session: string; relation_type: string }>;
   other_titles?: Array<{ title: string; note: string }>;
-  other_identifiers?: Array<{ identifier: string; scheme: string }>;
+  other_identifiers?: Array<{ identifier: string; scheme?: string }>;
   sources?: Array<{ url: string; note: string }>;
 }
 ```
@@ -254,7 +266,7 @@ errors: [
 **Input schema:**
 | Param | Type | Description |
 |:------|:-----|:------------|
-| `jurisdiction` | `string` optional | State name or OCD-ID. Strongly recommended — results without a jurisdiction filter span all states. |
+| `jurisdiction` | `string` required (`.min(1)`) | State name or OCD-ID. An unscoped search spans all 56 jurisdictions and exceeds the upstream timeout, so the schema rejects a call that omits it. |
 | `name` | `string` optional | Name or partial name to match (case-insensitive substring). |
 | `org_classification` | `z.enum(['legislature', 'executive', 'lower', 'upper', 'government'])` optional | Filter by role type. `upper` = Senate/upper chamber; `lower` = House/lower chamber; `executive` = governors and executive officials; `legislature` = every legislator, resolved server-side to the `upper` + `lower` union (see below). Omitting the filter returns every officeholder, executive included — not equivalent to `legislature`. |
 | `district` | `string` optional | District label (e.g., `"1"`, `"37"`, `"At-Large"`). District formats vary by state. |
@@ -325,7 +337,7 @@ first page and at most four for a deep one, rather than draining both chambers.
 
 High-value constituent lookup — no equivalent in congressgov-mcp-server (which uses state/district instead).
 
-**Description:** Find the legislators representing a geographic coordinate. Pass a latitude and longitude to get all state legislators (and potentially governor/executive officials) for that location. Useful for constituent-to-representative matching, address-based policy research, and electoral boundary analysis.
+**Description:** Find every legislator representing a geographic coordinate. Pass a latitude and longitude to get the state legislators (and potentially governor/executive officials) for that location, plus its two US Senators and its US Representative. Useful for constituent-to-representative matching, address-based policy research, and electoral boundary analysis.
 
 **Input schema:**
 | Param | Type | Description |
@@ -342,7 +354,9 @@ High-value constituent lookup — no equivalent in congressgov-mcp-server (which
     name: string;
     party: string;        // Normalized from upstream (see people search output note on party array)
     current_role: { title, org_classification, district } | null;
-    jurisdiction: { id, name };
+    jurisdiction: { id, name, classification? };  // "state" | "country" — the tier discriminator
+    given_name: string;
+    family_name: string;
     email: string;
     openstates_url: string;
     offices?: Array<{ name, classification, voice?, fax?, address? }>;
@@ -352,11 +366,15 @@ High-value constituent lookup — no equivalent in congressgov-mcp-server (which
     sources?: Array<{ url, note }>;
   }>;
   count: number;
+  stateCount: number;      // jurisdiction.classification === "state"
+  federalCount: number;    // jurisdiction.classification === "country"
   coverage_note?: string;  // Present when results are empty — explains why (e.g., outside US boundaries)
 }
 ```
 
 **Output note:** When no legislators are found for a valid coordinate (ocean, outside US), return `legislators: [], count: 0` — not an error. Add a `coverage_note` string field to the output to carry context when results are empty (e.g., "No legislators found for this coordinate. Verify the location is within a US state, DC, or one of the 5 US territories.").
+
+**Two tiers, disclosed not filtered.** `/people.geo` answers with the coordinate's federal delegation — two US Senators and one US Representative — alongside its state legislators. `current_role.org_classification` is `upper`/`lower` for both tiers, so only `jurisdiction.classification` (`"state"` vs `"country"`) separates them. That field reaches the output schema, the `stateCount`/`federalCount` enrichment, and a per-legislator label in `format()`; the federal records are the tool's only path to a coordinate's full representation, so nothing is dropped. A caller wanting one tier is better served by an optional `tier` filter than by removing data — not implemented, and not needed for disclosure.
 
 **Errors:**
 ```ts
@@ -376,7 +394,7 @@ errors: [
 **Input schema:**
 | Param | Type | Description |
 |:------|:-----|:------------|
-| `jurisdiction` | `string` optional | State name or OCD-ID. Omitting returns an empty result (200, `total_items: 0`) rather than searching all states, so supply one to get results. |
+| `jurisdiction` | `string` required (`.min(1)`) | State name or OCD-ID. An unscoped request exceeds the upstream timeout, so the schema rejects a call that omits it. |
 | `classification` | `z.enum(['committee', 'subcommittee'])` optional | Filter to parent committees or subcommittees. Omit for all. |
 | `chamber` | `z.enum(['upper', 'lower'])` optional | Filter by chamber. |
 | `parent` | `string` optional | OCD organization ID of a parent committee, to retrieve its subcommittees. |
@@ -444,7 +462,7 @@ errors: [
 **Input schema:**
 | Param | Type | Description |
 |:------|:-----|:------------|
-| `jurisdiction` | `string` optional in the schema, required in practice | State name or OCD-ID. The API rejects requests that omit it (`400 must provide 'jurisdiction' parameter`) — there is no all-states event search. Guarded in the handler via the `jurisdiction_required` reason rather than a required schema field, which would break the already-shipped optional parameter. |
+| `jurisdiction` | `string` required (`.min(1)`) | State name or OCD-ID. The API rejects requests that omit it (`400 must provide 'jurisdiction' parameter`) — there is no all-states event search, so the schema rejects a call that omits it. |
 | `after` | `string` optional | ISO 8601 datetime — events starting after this time. Use to find upcoming hearings. |
 | `before` | `string` optional | ISO 8601 datetime — events starting before this time. |
 | `require_bills` | `boolean` default false | When true, only return events with at least one bill on the agenda. Most useful for tracking legislation. |
@@ -483,11 +501,8 @@ errors: [
 
 **Errors:**
 ```ts
-errors: [
-  { reason: 'jurisdiction_required', code: ValidationError,
-    when: 'jurisdiction was omitted — the /events endpoint requires it',
-    recovery: 'Provide a jurisdiction (state name, abbreviation, or OCD-ID); the events endpoint has no all-states search.' },
-]
+errors: []
+// jurisdiction is enforced by the input schema, so no handler-level reason is needed for it.
 // Empty results are NOT an error — return results: [] with pagination.
 // The experimental coverage note belongs in the tool description, not as an error condition.
 ```
@@ -734,7 +749,8 @@ Default behavior (no includes): returns compact bill records only — identifier
 user: "who represents 123 Main St, Seattle?"
   → geocode to (47.6062, -122.3321) [external — not in this server]
   → openstates_get_legislators_by_location(lat, lng, include=offices)
-  → returns: state senators and representatives + contact info
+  → returns: state senators and representatives, plus the US Senators and US Representative
+    for that coordinate, + contact info — jurisdiction.classification tells the tiers apart
 ```
 
 Note: This server does not geocode addresses. The caller must provide lat/lng. In practice, Claude can geocode using NWS or other geo tools before calling this endpoint.
@@ -880,3 +896,8 @@ GET /bills?jurisdiction=wa&include=sponsorships&include=actions
 | 11 | Committee search normalizes a jurisdiction name to its abbreviation before the request | Upstream `/committees` returns HTTP 500 when a full state name is combined with a `chamber` filter; abbreviation and OCD-ID forms resolve. A static name→abbreviation map sidesteps the fault deterministically with no extra request. Scoped to `searchCommittees` — bills/people/events return 200 on the same shape. | 2026-07-16 |
 | 12 | `listJurisdictions` merges pages internally to keep the one-call inventory promise | The `state` set (56) outgrew the upstream `per_page` ceiling of 52, so one page can no longer return the full inventory. The default page-1 request fetches and merges the bounded set of pages, mirroring the `legislature` union reassembly; large collections fall through to plain pagination. | 2026-07-16 |
 | 13 | Jurisdiction resource declares the same typed `not_found` contract as the tool | The service always throws on a non-OK response, so the resource's `if (!jurisdiction)` guard was dead code — a real 404 bypassed it and leaked upstream. Catching the service `NotFound` and rethrowing via `ctx.fail` aligns the resource's error surface with `openstates_get_jurisdiction`. | 2026-07-16 |
+| 14 | `search_bills` builds `appliedFilters` and the empty-result notice from one record | The two surfaces had drifted apart and each omitted filters the query was actually issued with, so a zero-result answer named a cause that was not the cause. Deriving both from a single object makes divergence impossible; the notice takes the subset that narrows matching, since `sort`/`page`/`per_page` cannot explain a zero result and `include` is not a filter. | 2026-07-31 |
+| 15 | Unrecognized `jurisdiction` is diagnosed locally against the covered inventory | `/bills` answers an unrecognized jurisdiction with HTTP 200 and zero rows, identical to a genuine no-match, so upstream offers nothing to key on. The abbreviation set behind the existing `/committees` name map already enumerates all 56 jurisdictions, so the check reuses it (plus an OCD-ID pattern) rather than introducing a second inventory. Map and check moved together into `services/openstates/jurisdiction-inventory.ts` — static data and pure predicates, with no reason to sit inside an HTTP client carrying module-level rate-limit and budget state. It only shapes the recovery hint on an already-empty result — the request still goes upstream unchanged, so a form the map does not know is never blocked. | 2026-07-31 |
+| 16 | `get_legislators_by_location` discloses the federal tier rather than filtering it out | `/people.geo` returns the coordinate's US Senators and Representative with its state legislators, and the tool described itself as state-only. The federal records are the tool's only path to a coordinate's full representation, so the fix is legibility: `jurisdiction.classification` in the output schema, `stateCount`/`federalCount` in the enrichment, a tier label per legislator in `format()`. Chosen over parsing `jurisdiction.id` — the classification is the upstream's own discriminator and needs no string matching. | 2026-07-31 |
+| 17 | `CompactJurisdiction.classification` is optional and shared | The field is on the wire for every embedded jurisdiction (bill, person, committee, event), so declaring it once is accurate. Optional keeps the widening additive: the tools whose output schemas do not declare it are unchanged, since Zod strips what a schema omits. | 2026-07-31 |
+| 18 | `jurisdiction` moved from a handler guard to a required input schema field on `search_people`, `search_committees`, and `search_events` | The requirement was already unconditional, but lived only in the handler, so `tools/list` advertised `required: []` and a schema-reading client had no signal. `z.string().min(1)` puts it in `required` and makes the invalid call unconstructible. The trade is accepted deliberately: the rejection moves from a typed `jurisdiction_required` error carrying `data.reason` and a recovery hint to a plain input-validation error, and the discovery pointer to `openstates_list_jurisdictions` that the removed recovery hint carried now lives in each tool's description, which reaches the client in the same `tools/list` payload. `search_bills` is excluded — its `jurisdiction`-or-`q` rule is a genuine either/or that JSON Schema `required` cannot express. | 2026-07-31 |

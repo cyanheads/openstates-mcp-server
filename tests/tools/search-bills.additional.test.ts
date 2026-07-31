@@ -488,6 +488,193 @@ describe('searchBills — include enrichment surfacing', () => {
     expect(text).toContain('SB 5000');
     expect(text).toContain('companion');
   });
+
+  /**
+   * Regression coverage for issue #31. Open States returns bill `other_identifiers` entries with
+   * only an `identifier` key — no `scheme` — so a required `scheme` failed the output parse and
+   * lost every result in the page. The fixture above supplies a `scheme`, which is why unit tests
+   * passed while every live `include=other_identifiers` call errored.
+   */
+  describe('other_identifiers without a scheme', () => {
+    const pageWithSchemelessIdentifier = {
+      results: [
+        { ...mockBill, other_identifiers: [{ identifier: 'ocd-bill-wa-2025_2026-hb2073' }] },
+      ],
+      pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+    };
+
+    it('parses an entry that omits scheme through the output schema', () => {
+      const bill = searchBills.output.parse(pageWithSchemelessIdentifier).results[0];
+      expect(bill.other_identifiers).toEqual([{ identifier: 'ocd-bill-wa-2025_2026-hb2073' }]);
+      expect(bill.other_identifiers?.[0]?.scheme).toBeUndefined();
+    });
+
+    it('renders the identifier without an empty parenthetical', () => {
+      const blocks = searchBills.format!(searchBills.output.parse(pageWithSchemelessIdentifier));
+      const text = (blocks[0] as { text: string }).text;
+      expect(text).toContain('- ocd-bill-wa-2025_2026-hb2073');
+      expect(text).not.toContain('undefined');
+      expect(text).not.toContain('()');
+    });
+  });
+});
+
+/**
+ * Regression coverage for issue #32. `appliedFilters` and the empty-result notice each echoed a
+ * subset of the filters the query was actually issued with — a search narrowed by `subject` or
+ * `sponsor` reported neither, so the recovery surfaces named a cause that was not the cause.
+ * Both are now built from one record, so the assertions below cover the same filter set twice on
+ * purpose: an echo that drifts from the notice is the defect.
+ */
+describe('searchBills — zero-result recovery names every filter', () => {
+  let mockService: { searchBills: ReturnType<typeof vi.fn> };
+
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    mockService = {
+      searchBills: vi.fn().mockResolvedValue({
+        results: [],
+        pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
+      }),
+    };
+    vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
+  });
+
+  const everyFilter = {
+    jurisdiction: 'wa',
+    q: 'housing',
+    session: '2025-2026',
+    chamber: 'lower' as const,
+    classification: 'bill',
+    subject: ['Housing'],
+    sponsor: 'ocd-person/abc123',
+    sponsor_classification: 'primary',
+    action_since: '2025-01-01',
+    updated_since: '2025-02-01',
+    created_since: '2025-03-01',
+    per_page: 2,
+  };
+
+  it('echoes subject, sponsor, and sponsor_classification in appliedFilters', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    await searchBills.handler(searchBills.input.parse(everyFilter), ctx);
+    expect(getEnrichment(ctx).appliedFilters).toEqual({
+      ...everyFilter,
+      sort: 'updated_desc',
+      page: 1,
+    });
+  });
+
+  it('names every narrowing filter in the notice', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    await searchBills.handler(searchBills.input.parse(everyFilter), ctx);
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('jurisdiction="wa"');
+    expect(notice).toContain('q="housing"');
+    expect(notice).toContain('session="2025-2026"');
+    expect(notice).toContain('chamber="lower"');
+    expect(notice).toContain('classification="bill"');
+    expect(notice).toContain('subject=["Housing"]');
+    expect(notice).toContain('sponsor="ocd-person/abc123"');
+    expect(notice).toContain('sponsor_classification="primary"');
+    expect(notice).toContain('action_since="2025-01-01"');
+    expect(notice).toContain('updated_since="2025-02-01"');
+    expect(notice).toContain('created_since="2025-03-01"');
+  });
+
+  /**
+   * `sort`/`page`/`per_page` are echoed for self-verification but cannot explain a zero result, and
+   * `include` selects inline related data rather than filtering — naming any of them as a cause
+   * would misdirect the caller.
+   */
+  it('leaves sort, page, per_page, and include out of the notice', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    const input = searchBills.input.parse({
+      jurisdiction: 'wa',
+      per_page: 3,
+      include: ['actions'],
+    });
+    await searchBills.handler(input, ctx);
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('jurisdiction="wa"');
+    expect(notice).not.toContain('sort=');
+    expect(notice).not.toContain('page=');
+    expect(notice).not.toContain('include=');
+    expect(getEnrichment(ctx).appliedFilters).not.toHaveProperty('include');
+  });
+
+  /**
+   * An empty `subject` array is dropped on the way upstream, so echoing it would report a filter
+   * that was never applied. It leaves the record as `undefined`, which the trailer's JSON
+   * serialization omits — same as any filter the caller did not supply.
+   */
+  it('omits a subject filter that arrived as an empty array', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    await searchBills.handler(searchBills.input.parse({ jurisdiction: 'wa', subject: [] }), ctx);
+    const applied = getEnrichment(ctx).appliedFilters as Record<string, unknown>;
+    expect(applied.subject).toBeUndefined();
+    expect(JSON.stringify(applied)).not.toContain('subject');
+    expect(getEnrichment(ctx).notice).not.toContain('subject=');
+  });
+
+  /**
+   * Upstream answers an unrecognized jurisdiction with HTTP 200 and zero rows, exactly as it
+   * answers a well-formed query that matched nothing, so the generic "broaden the query" hint
+   * pointed at the wrong dimension. The value is still sent upstream unchanged — only the hint
+   * changes.
+   */
+  it('names an unrecognized jurisdiction as the likely cause', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    await searchBills.handler(searchBills.input.parse({ jurisdiction: 'notastate' }), ctx);
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('jurisdiction="notastate"');
+    expect(notice).toContain('openstates_list_jurisdictions');
+    expect(notice).not.toContain('Try broadening');
+    expect(mockService.searchBills).toHaveBeenCalledWith(
+      expect.objectContaining({ jurisdiction: 'notastate' }),
+      expect.anything(),
+    );
+  });
+
+  it('keeps the generic hint for a recognized jurisdiction that simply matched nothing', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    await searchBills.handler(
+      searchBills.input.parse({
+        jurisdiction: 'ocd-jurisdiction/country:us/district:dc/government',
+      }),
+      ctx,
+    );
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('Try broadening');
+    expect(notice).not.toContain('openstates_list_jurisdictions');
+  });
+
+  it('keeps the session hint when a recognized jurisdiction is filtered by session', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    await searchBills.handler(
+      searchBills.input.parse({ jurisdiction: 'Washington', session: '2025-2026' }),
+      ctx,
+    );
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('openstates_get_jurisdiction');
+  });
+
+  /** A q-only search has no jurisdiction to diagnose — the generic hint is all that applies. */
+  it('does not diagnose a jurisdiction when none was supplied', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    await searchBills.handler(searchBills.input.parse({ q: 'zzqqxxnomatch' }), ctx);
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('q="zzqqxxnomatch"');
+    expect(notice).toContain('Try broadening');
+  });
 });
 
 /**

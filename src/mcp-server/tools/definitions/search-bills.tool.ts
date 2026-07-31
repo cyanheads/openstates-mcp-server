@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { isKnownJurisdiction } from '@/services/openstates/jurisdiction-inventory.js';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const BillIncludeEnum = z.enum([
@@ -33,6 +34,27 @@ const BillSortEnum = z.enum([
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/;
 const isoDateMessage =
   'Must be an ISO 8601 date or datetime (e.g., "2025-01-01" or "2025-01-01T00:00:00Z").';
+
+/**
+ * The `appliedFilters` keys that narrow the result set, in the order the empty-result notice
+ * enumerates them. `sort`, `page`, and `per_page` are echoed too but excluded here: neither
+ * changes which bills match, so naming them as a cause of zero results would misdirect. `include`
+ * is not a filter at all — it selects inline related data — and is echoed by none of the search
+ * tools.
+ */
+const MATCHING_FILTER_KEYS = [
+  'jurisdiction',
+  'q',
+  'session',
+  'chamber',
+  'classification',
+  'subject',
+  'sponsor',
+  'sponsor_classification',
+  'action_since',
+  'updated_since',
+  'created_since',
+] as const;
 
 export const searchBills = tool('openstates_search_bills', {
   title: 'Search Bills',
@@ -231,7 +253,12 @@ export const searchBills = tool('openstates_search_bills', {
                 z
                   .object({
                     identifier: z.string().describe('Alternate bill identifier.'),
-                    scheme: z.string().describe('Identifier scheme (the issuing system).'),
+                    scheme: z
+                      .string()
+                      .optional()
+                      .describe(
+                        'Identifier scheme (the issuing system). Absent for bills — Open States omits it on every bill record observed.',
+                      ),
                   })
                   .describe('Alternate identifier record.'),
               )
@@ -371,7 +398,7 @@ export const searchBills = tool('openstates_search_bills', {
       .string()
       .optional()
       .describe(
-        'Recovery hint when results are empty — echoes the filters applied and suggests how to broaden. Absent when results are returned.',
+        'Recovery hint when results are empty — names every filter that narrowed the query and suggests how to broaden. Absent when results are returned.',
       ),
     appliedFilters: z
       .object({
@@ -380,6 +407,12 @@ export const searchBills = tool('openstates_search_bills', {
         session: z.string().optional().describe('Session filter as received.'),
         chamber: z.string().optional().describe('Chamber filter as received.'),
         classification: z.string().optional().describe('Classification filter as received.'),
+        subject: z
+          .array(z.string())
+          .optional()
+          .describe('Subject tags filtered on, as received. Absent when none were supplied.'),
+        sponsor: z.string().optional().describe('Sponsor filter as received.'),
+        sponsor_classification: z.string().optional().describe('Sponsor-type filter as received.'),
         action_since: z.string().optional().describe('action_since date filter as received.'),
         updated_since: z.string().optional().describe('updated_since date filter as received.'),
         created_since: z.string().optional().describe('created_since date filter as received.'),
@@ -427,6 +460,8 @@ export const searchBills = tool('openstates_search_bills', {
       });
     }
 
+    const subject = input.subject?.length ? input.subject : undefined;
+
     const svc = getOpenStatesApiService();
     const result = await svc
       .searchBills(
@@ -436,7 +471,7 @@ export const searchBills = tool('openstates_search_bills', {
           session: input.session,
           chamber: input.chamber,
           classification: input.classification,
-          subject: input.subject && input.subject.length > 0 ? input.subject : undefined,
+          subject,
           sponsor: input.sponsor,
           sponsor_classification: input.sponsor_classification,
           sort: input.sort,
@@ -465,37 +500,49 @@ export const searchBills = tool('openstates_search_bills', {
       total: result.pagination.total_items,
     });
 
+    // One record backs both recovery surfaces, so the echo and the notice can never disagree
+    // about what was applied.
+    const appliedFilters = {
+      jurisdiction: input.jurisdiction,
+      q: input.q,
+      session: input.session,
+      chamber: input.chamber,
+      classification: input.classification,
+      subject,
+      sponsor: input.sponsor,
+      sponsor_classification: input.sponsor_classification,
+      action_since: input.action_since,
+      updated_since: input.updated_since,
+      created_since: input.created_since,
+      sort: input.sort,
+      page: input.page,
+      per_page: input.per_page,
+    };
+
     ctx.enrich.total(result.pagination.total_items);
     ctx.enrich({
       page: result.pagination.page,
       maxPage: result.pagination.max_page,
-      appliedFilters: {
-        jurisdiction: input.jurisdiction,
-        q: input.q,
-        session: input.session,
-        chamber: input.chamber,
-        classification: input.classification,
-        action_since: input.action_since,
-        updated_since: input.updated_since,
-        created_since: input.created_since,
-        sort: input.sort,
-        page: input.page,
-        per_page: input.per_page,
-      },
+      appliedFilters,
     });
 
     if (result.results.length === 0) {
-      const filters: string[] = [];
-      if (input.jurisdiction) filters.push(`jurisdiction="${input.jurisdiction}"`);
-      if (input.q) filters.push(`q="${input.q}"`);
-      if (input.session) filters.push(`session="${input.session}"`);
-      if (input.chamber) filters.push(`chamber="${input.chamber}"`);
-      const sessionHint = input.session
-        ? ' If the session filter is the likely cause, use openstates_get_jurisdiction with include=legislative_sessions to list valid session identifiers for this jurisdiction.'
-        : '';
-      ctx.enrich.notice(
-        `No bills matched ${filters.join(', ')}. Try broadening the query or removing filters.${sessionHint}`,
-      );
+      const filters = MATCHING_FILTER_KEYS.flatMap((key) => {
+        const value = appliedFilters[key];
+        return value === undefined ? [] : [`${key}=${JSON.stringify(value)}`];
+      });
+      // An unrecognized jurisdiction is indistinguishable from a genuine no-match upstream — both
+      // are HTTP 200 with zero rows — so name it when the local inventory does not recognize it
+      // rather than pointing the caller at the other filters.
+      const hint =
+        input.jurisdiction && !isKnownJurisdiction(input.jurisdiction)
+          ? 'Open States covers no jurisdiction by that name, two-letter abbreviation, or OCD-ID, and an unrecognized one returns zero bills rather than an error. Use openstates_list_jurisdictions to get a valid identifier.'
+          : `Try broadening the query or removing filters.${
+              input.session
+                ? ' If the session filter is the likely cause, use openstates_get_jurisdiction with include=legislative_sessions to list valid session identifiers for this jurisdiction.'
+                : ''
+            }`;
+      ctx.enrich.notice(`No bills matched ${filters.join(', ')}. ${hint}`);
     }
 
     return { results: result.results, pagination: result.pagination };
@@ -565,7 +612,7 @@ export const searchBills = tool('openstates_search_bills', {
         lines.push('');
         lines.push('**Other identifiers:**');
         for (const oi of bill.other_identifiers) {
-          lines.push(`- ${oi.identifier} (${oi.scheme})`);
+          lines.push(`- ${oi.identifier}${oi.scheme ? ` (${oi.scheme})` : ''}`);
         }
       }
       if (bill.votes?.length) {

@@ -16,6 +16,7 @@ import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import type { RequestContext } from '@cyanheads/mcp-ts-core/utils';
 import { fetchWithTimeout, logger, RateLimiter, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import type { ServerConfig } from '@/config/server-config.js';
+import { normalizeCommitteeJurisdiction } from './jurisdiction-inventory.js';
 import type {
   Bill,
   BillListResponse,
@@ -88,87 +89,6 @@ function normalizePerson(raw: RawPerson): Person {
  * than draining the collection.
  */
 const MAX_JURISDICTION_MERGE_PAGES = 2;
-
-/**
- * Full jurisdiction display name (lowercased) → Open States abbreviation, covering the entire
- * `classification=state` inventory: 50 states, DC, and 5 US territories.
- *
- * The `/committees` endpoint returns HTTP 500 when a full jurisdiction *name* is combined with a
- * `chamber` filter, while the abbreviation and OCD-ID forms resolve correctly; normalizing a name
- * to its abbreviation before the request sidesteps the upstream fault. `/bills`, `/people`, and
- * `/events` do not exhibit it, so this map is applied only in `searchCommittees`. A static map
- * keeps normalization deterministic and adds no request.
- */
-const JURISDICTION_NAME_TO_ABBR: Record<string, string> = {
-  alabama: 'al',
-  alaska: 'ak',
-  arizona: 'az',
-  arkansas: 'ar',
-  california: 'ca',
-  colorado: 'co',
-  connecticut: 'ct',
-  delaware: 'de',
-  florida: 'fl',
-  georgia: 'ga',
-  hawaii: 'hi',
-  idaho: 'id',
-  illinois: 'il',
-  indiana: 'in',
-  iowa: 'ia',
-  kansas: 'ks',
-  kentucky: 'ky',
-  louisiana: 'la',
-  maine: 'me',
-  maryland: 'md',
-  massachusetts: 'ma',
-  michigan: 'mi',
-  minnesota: 'mn',
-  mississippi: 'ms',
-  missouri: 'mo',
-  montana: 'mt',
-  nebraska: 'ne',
-  nevada: 'nv',
-  'new hampshire': 'nh',
-  'new jersey': 'nj',
-  'new mexico': 'nm',
-  'new york': 'ny',
-  'north carolina': 'nc',
-  'north dakota': 'nd',
-  ohio: 'oh',
-  oklahoma: 'ok',
-  oregon: 'or',
-  pennsylvania: 'pa',
-  'rhode island': 'ri',
-  'south carolina': 'sc',
-  'south dakota': 'sd',
-  tennessee: 'tn',
-  texas: 'tx',
-  utah: 'ut',
-  vermont: 'vt',
-  virginia: 'va',
-  washington: 'wa',
-  'west virginia': 'wv',
-  wisconsin: 'wi',
-  wyoming: 'wy',
-  'district of columbia': 'dc',
-  'american samoa': 'as',
-  guam: 'gu',
-  'northern mariana islands': 'mp',
-  'puerto rico': 'pr',
-  // Open States' canonical display name is "United States Virgin Islands"; the shorter form is
-  // carried too so either spelling a caller might copy resolves to the abbreviation.
-  'united states virgin islands': 'vi',
-  'virgin islands': 'vi',
-};
-
-/**
- * Resolve a `jurisdiction` input to a `/committees`-safe form. A recognized full state or
- * territory name maps to its abbreviation; abbreviations and OCD-IDs (never name-map keys) and
- * any unrecognized value pass through unchanged.
- */
-function normalizeCommitteeJurisdiction(value: string): string {
-  return JURISDICTION_NAME_TO_ABBR[value.trim().toLowerCase()] ?? value;
-}
 
 /** Rolling window the daily budget is measured over. */
 const BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
