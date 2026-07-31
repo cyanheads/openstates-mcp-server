@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.1](changelog/0.2.x/0.2.1.md) — 2026-07-31
+
+Bill and legislative-session renderers no longer show orphaned punctuation for upstream fields sent as empty strings; the search_people description no longer claims a party filter that doesn't exist upstream.
+
 ## [0.2.0](changelog/0.2.x/0.2.0.md) — 2026-07-31 · ⚠️ Breaking
 
 jurisdiction is now a required input field (not just handler-enforced) on search_people/search_committees/search_events — a breaking schema change; bill other_identifiers no longer fails output validation; search_bills names every filter behind a zero-result answer; get_legislators_by_location discloses the federal delegation it already returned.
