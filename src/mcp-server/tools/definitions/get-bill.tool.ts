@@ -250,7 +250,12 @@ export const getBill = tool('openstates_get_bill', {
         z
           .object({
             identifier: z.string().describe('Alternate bill identifier.'),
-            scheme: z.string().describe('Identifier scheme (the issuing system).'),
+            scheme: z
+              .string()
+              .optional()
+              .describe(
+                'Identifier scheme (the issuing system). Absent for bills — Open States omits it on every bill record observed.',
+              ),
           })
           .describe('Alternate identifier record.'),
       )
@@ -439,7 +444,7 @@ export const getBill = tool('openstates_get_bill', {
       lines.push('');
       lines.push('## Other Identifiers');
       for (const oi of result.other_identifiers) {
-        lines.push(`- ${oi.identifier} (${oi.scheme})`);
+        lines.push(`- ${oi.identifier}${oi.scheme ? ` (${oi.scheme})` : ''}`);
       }
     }
 

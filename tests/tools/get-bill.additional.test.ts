@@ -299,3 +299,30 @@ describe('getBill — include enrichment surfacing (other_titles, other_identifi
     expect(text).toContain('Legislature bill page');
   });
 });
+
+/**
+ * Regression coverage for issue #31. Open States returns bill `other_identifiers` entries with
+ * only an `identifier` key — no `scheme` — so a required `scheme` failed the output parse and
+ * lost the entire bill record. The fixtures above supply a `scheme`, which is why unit tests
+ * passed while every live `include=other_identifiers` call errored.
+ */
+describe('getBill — other_identifiers without a scheme (issue #31)', () => {
+  const billWithSchemelessIdentifier = {
+    ...baseBill,
+    other_identifiers: [{ identifier: 'ocd-bill-wa-2025_2026-hb2073' }],
+  };
+
+  it('parses an entry that omits scheme through the output schema', () => {
+    const parsed = getBill.output.parse(billWithSchemelessIdentifier);
+    expect(parsed.other_identifiers).toEqual([{ identifier: 'ocd-bill-wa-2025_2026-hb2073' }]);
+    expect(parsed.other_identifiers?.[0]?.scheme).toBeUndefined();
+  });
+
+  it('renders the identifier without an empty parenthetical', () => {
+    const blocks = getBill.format!(getBill.output.parse(billWithSchemelessIdentifier));
+    const text = (blocks[0] as { text: string }).text;
+    expect(text).toContain('- ocd-bill-wa-2025_2026-hb2073');
+    expect(text).not.toContain('undefined');
+    expect(text).not.toContain('()');
+  });
+});
