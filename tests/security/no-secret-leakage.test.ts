@@ -13,7 +13,8 @@ import { listJurisdictions } from '@/mcp-server/tools/definitions/list-jurisdict
 import { searchBills } from '@/mcp-server/tools/definitions/search-bills.tool.js';
 import { searchPeople } from '@/mcp-server/tools/definitions/search-people.tool.js';
 
-vi.mock('@/services/openstates/openstates-service.js', () => ({
+vi.mock('@/services/openstates/openstates-service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/openstates/openstates-service.js')>()),
   getOpenStatesApiService: vi.fn(),
 }));
 

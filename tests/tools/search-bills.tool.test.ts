@@ -7,7 +7,8 @@ import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchBills } from '@/mcp-server/tools/definitions/search-bills.tool.js';
 
-vi.mock('@/services/openstates/openstates-service.js', () => ({
+vi.mock('@/services/openstates/openstates-service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/openstates/openstates-service.js')>()),
   getOpenStatesApiService: vi.fn(),
 }));
 
