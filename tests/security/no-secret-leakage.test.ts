@@ -99,7 +99,7 @@ describe('no API key leakage in tool output', () => {
   }
 
   it('searchBills result does not contain the API key', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({ jurisdiction: 'wa' });
     const result = await searchBills.handler(input, ctx);
     assertNoSecretIn(result, 'searchBills result');
@@ -108,7 +108,7 @@ describe('no API key leakage in tool output', () => {
   });
 
   it('getBill result does not contain the API key', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getBill.errors });
     const input = getBill.input.parse({ openstates_id: 'ocd-bill/99999' });
     const result = await getBill.handler(input, ctx);
     assertNoSecretIn(result, 'getBill result');
@@ -117,7 +117,7 @@ describe('no API key leakage in tool output', () => {
   });
 
   it('getJurisdiction result does not contain the API key', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getJurisdiction.errors });
     const input = getJurisdiction.input.parse({ jurisdiction_id: 'wa' });
     const result = await getJurisdiction.handler(input, ctx);
     assertNoSecretIn(result, 'getJurisdiction result');
@@ -126,7 +126,7 @@ describe('no API key leakage in tool output', () => {
   });
 
   it('listJurisdictions result does not contain the API key', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
     const input = listJurisdictions.input.parse({});
     const result = await listJurisdictions.handler(input, ctx);
     assertNoSecretIn(result, 'listJurisdictions result');
@@ -135,7 +135,7 @@ describe('no API key leakage in tool output', () => {
   });
 
   it('searchPeople result does not contain the API key', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa' });
     const result = await searchPeople.handler(input, ctx);
     assertNoSecretIn(result, 'searchPeople result');
@@ -144,7 +144,7 @@ describe('no API key leakage in tool output', () => {
   });
 
   it('getLegislatorsByLocation result does not contain the API key', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getLegislatorsByLocation.errors });
     const input = getLegislatorsByLocation.input.parse({ latitude: 47.6, longitude: -122.3 });
     const result = await getLegislatorsByLocation.handler(input, ctx);
     assertNoSecretIn(result, 'getLegislatorsByLocation result');
@@ -191,7 +191,7 @@ describe('injection attempts in bill search do not reach output as-is', () => {
   }
 
   it('oversized q field is passed through without crashing', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const longQuery = 'a'.repeat(10_000);
     const input = searchBills.input.parse({ q: longQuery });
     await expect(searchBills.handler(input, ctx)).resolves.toBeDefined();
@@ -211,7 +211,7 @@ describe('injection attempts in path-based lookups do not crash', () => {
   });
 
   it('getBill with path-traversal jurisdiction does not crash', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getBill.errors });
     const input = getBill.input.parse({
       jurisdiction: '../../../etc/passwd',
       session: '2025',
@@ -222,7 +222,7 @@ describe('injection attempts in path-based lookups do not crash', () => {
   });
 
   it('getBill with null bytes in openstates_id does not crash', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getBill.errors });
     const input = getBill.input.parse({ openstates_id: 'ocd-bill/\x00injected' });
     await expect(getBill.handler(input, ctx)).resolves.toBeDefined();
   });

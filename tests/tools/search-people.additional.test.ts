@@ -5,7 +5,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchPeople } from '@/mcp-server/tools/definitions/search-people.tool.js';
 
@@ -48,7 +48,7 @@ describe('searchPeople — filters forwarded to service', () => {
   });
 
   it('passes district filter to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', district: '37' });
     await searchPeople.handler(input, ctx);
     expect(mockService.searchPeople).toHaveBeenCalledWith(
@@ -58,7 +58,7 @@ describe('searchPeople — filters forwarded to service', () => {
   });
 
   it('passes org_classification filter to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', org_classification: 'upper' });
     await searchPeople.handler(input, ctx);
     expect(mockService.searchPeople).toHaveBeenCalledWith(
@@ -68,7 +68,7 @@ describe('searchPeople — filters forwarded to service', () => {
   });
 
   it('keeps legislature in the enum and forwards it for the service to resolve', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({
       jurisdiction: 'wa',
       org_classification: 'legislature',
@@ -81,7 +81,7 @@ describe('searchPeople — filters forwarded to service', () => {
   });
 
   it('echoes legislature back as the applied filter, not the chambers it resolved to', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({
       jurisdiction: 'wa',
       org_classification: 'legislature',
@@ -94,7 +94,7 @@ describe('searchPeople — filters forwarded to service', () => {
   });
 
   it('forwards id to the service as the array upstream repeats, jurisdiction absent', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const ids = ['ocd-person/abc123', 'ocd-person/def456'];
     const input = searchPeople.input.parse({ id: ids });
     await searchPeople.handler(input, ctx);
@@ -105,7 +105,7 @@ describe('searchPeople — filters forwarded to service', () => {
   });
 
   it('forwards id alongside a jurisdiction when both are given', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', id: ['ocd-person/abc123'] });
     await searchPeople.handler(input, ctx);
     expect(mockService.searchPeople).toHaveBeenCalledWith(
@@ -115,14 +115,14 @@ describe('searchPeople — filters forwarded to service', () => {
   });
 
   it('echoes id in the applied filters', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ id: ['ocd-person/abc123'] });
     await searchPeople.handler(input, ctx);
     expect(getEnrichment(ctx).appliedFilters).toMatchObject({ id: ['ocd-person/abc123'] });
   });
 
   it('passes page and per_page to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', page: 2, per_page: 5 });
     await searchPeople.handler(input, ctx);
     expect(mockService.searchPeople).toHaveBeenCalledWith(
@@ -136,7 +136,7 @@ describe('searchPeople — filters forwarded to service', () => {
       results: [mockPerson],
       pagination: { page: 3, per_page: 5, max_page: 8, total_items: 40 },
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', page: 3, per_page: 5 });
     await searchPeople.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -154,11 +154,11 @@ describe('searchPeople — filters forwarded to service', () => {
       results: [personWithLinks],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', include: ['links'] });
     const result = await searchPeople.handler(input, ctx);
-    expect(result.results[0].links).toBeDefined();
-    expect(result.results[0].links?.[0].url).toBe('https://rep.example.com');
+    expect(result.results[0]!.links).toBeDefined();
+    expect(result.results[0]!.links?.[0]?.url).toBe('https://rep.example.com');
   });
 });
 
@@ -180,7 +180,7 @@ describe('searchPeople — empty result for an id lookup', () => {
   });
 
   it('names the ID and the two ways it matches nothing', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ id: ['ocd-person/unknown'] });
     await searchPeople.handler(input, ctx);
     const { notice } = getEnrichment(ctx);
@@ -190,7 +190,7 @@ describe('searchPeople — empty result for an id lookup', () => {
   });
 
   it('omits the jurisdiction clause entirely when none was supplied', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ id: ['ocd-person/unknown'] });
     await searchPeople.handler(input, ctx);
     expect(getEnrichment(ctx).notice).not.toContain('jurisdiction="');
@@ -218,11 +218,11 @@ describe('searchPeople — sparse upstream payloads', () => {
   });
 
   it('handles person with empty optional string fields', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa' });
     const result = await searchPeople.handler(input, ctx);
-    expect(result.results[0].email).toBe('');
-    expect(result.results[0].openstates_url).toBe('');
+    expect(result.results[0]!.email).toBe('');
+    expect(result.results[0]!.openstates_url).toBe('');
   });
 });
 
@@ -233,7 +233,7 @@ describe('searchPeople — format edge cases', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     };
     const blocks = searchPeople.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('jane.smith@leg.wa.gov');
     expect(text).toContain('https://openstates.org/person/jane-smith/');
   });
@@ -249,7 +249,7 @@ describe('searchPeople — format edge cases', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     };
     const blocks = searchPeople.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('https://smith.example.com');
     expect(text).toContain('website');
   });
@@ -266,7 +266,7 @@ describe('searchPeople — format edge cases', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     };
     const blocks = searchPeople.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Nguyễn Thị Hương');
   });
 
@@ -277,7 +277,7 @@ describe('searchPeople — format edge cases', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     };
     const blocks = searchPeople.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     // Should not throw; party line may be absent or blank
     expect(text).toContain('Jane Smith');
   });
@@ -295,7 +295,7 @@ describe('searchPeople — format edge cases', () => {
  * The Open States /people endpoint enforces no minimum name length — GET
  * /people?name=a returns 200 with tens of thousands of matches. The handler
  * therefore intercepts nothing: every upstream error reaches the caller as-is,
- * including the InvalidParams that a short name was once assumed to produce.
+ * including domain validation failures that a short name was once assumed to produce.
  */
 describe('searchPeople — upstream errors bubble unchanged', () => {
   let mockService: { searchPeople: ReturnType<typeof vi.fn> };
@@ -306,18 +306,18 @@ describe('searchPeople — upstream errors bubble unchanged', () => {
     vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
   });
 
-  it('bubbles InvalidParams unchanged for a single-character name', async () => {
-    const originalErr = new McpError(JsonRpcErrorCode.InvalidParams, 'Bad request');
+  it('bubbles ValidationError unchanged for a single-character name', async () => {
+    const originalErr = new McpError(JsonRpcErrorCode.ValidationError, 'Bad request');
     mockService.searchPeople.mockRejectedValue(originalErr);
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', name: 'a' });
     await expect(searchPeople.handler(input, ctx)).rejects.toBe(originalErr);
   });
 
-  it('bubbles a non-InvalidParams error unchanged', async () => {
+  it('bubbles a non-validation error unchanged', async () => {
     const originalErr = new McpError(JsonRpcErrorCode.ServiceUnavailable, 'API down');
     mockService.searchPeople.mockRejectedValue(originalErr);
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', name: 'J' });
     await expect(searchPeople.handler(input, ctx)).rejects.toBe(originalErr);
   });
@@ -355,13 +355,13 @@ describe('searchPeople — include enrichment surfacing', () => {
     };
     vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({
       jurisdiction: 'wa',
       include: ['other_names', 'other_identifiers', 'sources'],
     });
     const handlerResult = await searchPeople.handler(input, ctx);
-    const person = searchPeople.output.parse(handlerResult).results[0];
+    const person = searchPeople.output.parse(handlerResult).results[0]!;
 
     expect(person.other_names).toEqual([{ name: 'Jane A. Smith', note: 'ballot name' }]);
     expect(person.other_identifiers).toEqual([
@@ -378,7 +378,7 @@ describe('searchPeople — include enrichment surfacing', () => {
       results: [enrichedPerson],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Jane A. Smith');
     expect(text).toContain('ballot name');
     expect(text).toContain('WA000123');
@@ -408,7 +408,7 @@ describe('searchPeople — link rendering with an empty note', () => {
       ],
       pagination,
     });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain(
       '**Links:** https://housedemocrats.example.gov/thomas/, https://leg.example.gov/members/thomas',
     );
@@ -425,7 +425,7 @@ describe('searchPeople — link rendering with an empty note', () => {
       ],
       pagination,
     });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('**Links:** official page: https://leg.example.gov/members/thomas');
   });
 });
@@ -455,7 +455,7 @@ describe('searchPeople — out-of-range page', () => {
     const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', page: 99 });
 
-    const err = await searchPeople.handler(input, ctx).catch((e: unknown) => e);
+    const err = await Promise.resolve(searchPeople.handler(input, ctx)).catch((e: unknown) => e);
 
     expect((err as McpError).data).toMatchObject({
       reason: 'invalid_page',
@@ -483,7 +483,7 @@ describe('searchPeople — party is an output field, not a filter (issue #39)', 
     expect(searchPeople.description).toContain('cannot be filtered on');
   });
 
-  it('silently drops a party key rather than forwarding it', async () => {
+  it('rejects an undeclared party key at the contract boundary', async () => {
     const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
     const searchPeopleSpy = vi.fn().mockResolvedValue({
       results: [mockPerson],
@@ -491,14 +491,21 @@ describe('searchPeople — party is an output field, not a filter (issue #39)', 
     });
     vi.mocked(getOpenStatesApiService).mockReturnValue({ searchPeople: searchPeopleSpy } as never);
 
-    const input = searchPeople.input.parse({ jurisdiction: 'wa', party: 'Democratic' });
-    expect(input).not.toHaveProperty('party');
+    const result = await runToolContract(searchPeople, {
+      jurisdiction: 'wa',
+      party: 'Democratic',
+    } as never);
 
-    await searchPeople.handler(input, createMockContext());
-    expect(searchPeopleSpy).toHaveBeenCalledWith(
-      expect.not.objectContaining({ party: expect.anything() }),
-      expect.anything(),
-    );
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: JsonRpcErrorCode.ValidationError,
+          message: expect.stringContaining('party'),
+        },
+      },
+    });
+    expect(searchPeopleSpy).not.toHaveBeenCalled();
   });
 
   it('still reports party on every result', () => {

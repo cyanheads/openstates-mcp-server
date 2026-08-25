@@ -71,11 +71,11 @@ describe('getLegislatorsByLocation', () => {
   });
 
   it('returns legislators for valid coordinates', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getLegislatorsByLocation.errors });
     const input = getLegislatorsByLocation.input.parse({ latitude: 47.6062, longitude: -122.3321 });
     const result = await getLegislatorsByLocation.handler(input, ctx);
     expect(result.legislators).toHaveLength(1);
-    expect(result.legislators[0].id).toBe('ocd-person/abc123');
+    expect(result.legislators[0]!.id).toBe('ocd-person/abc123');
     const enrichment = getEnrichment(ctx);
     expect(enrichment.count).toBe(1);
   });
@@ -101,7 +101,7 @@ describe('getLegislatorsByLocation', () => {
       results: [],
       pagination: { page: 1, per_page: 0, max_page: 1, total_items: 0 },
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getLegislatorsByLocation.errors });
     const input = getLegislatorsByLocation.input.parse({ latitude: 20, longitude: -160 });
     const result = await getLegislatorsByLocation.handler(input, ctx);
     expect(result.legislators).toHaveLength(0);
@@ -116,8 +116,8 @@ describe('getLegislatorsByLocation', () => {
       legislators: [mockPerson],
     };
     const blocks = getLegislatorsByLocation.format!(result);
-    expect(blocks[0].type).toBe('text');
-    const text = (blocks[0] as { text: string }).text;
+    expect(blocks[0]!.type).toBe('text');
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Jane Smith');
     expect(text).toContain('ocd-person/abc123');
     expect(text).toContain('Washington');
@@ -145,7 +145,7 @@ describe('getLegislatorsByLocation', () => {
         results: [enrichedPerson],
         pagination: { page: 1, per_page: 1, max_page: 1, total_items: 1 },
       });
-      const ctx = createMockContext();
+      const ctx = createMockContext({ errors: getLegislatorsByLocation.errors });
       const input = getLegislatorsByLocation.input.parse({
         latitude: 47.6062,
         longitude: -122.3321,
@@ -153,25 +153,25 @@ describe('getLegislatorsByLocation', () => {
       const structured = getLegislatorsByLocation.output.parse(
         await getLegislatorsByLocation.handler(input, ctx),
       );
-      const person = structured.legislators[0];
+      const person = structured.legislators[0]!;
       expect(person?.image).toBe('https://data.openstates.org/images/small/ocd-person/abc123');
       expect(person?.current_role?.division_id).toBe('ocd-division/country:us/state:wa/sldu:37');
     });
 
     it('renders both in format()', () => {
       const blocks = getLegislatorsByLocation.format!({ legislators: [enrichedPerson] });
-      const text = (blocks[0] as { text: string }).text;
+      const text = (blocks[0]! as { text: string }).text;
       expect(text).toContain('https://data.openstates.org/images/small/ocd-person/abc123');
       expect(text).toContain('ocd-division/country:us/state:wa/sldu:37');
     });
 
     it('omits both when upstream carries neither (sparse payload)', () => {
       const structured = getLegislatorsByLocation.output.parse({ legislators: [mockPerson] });
-      const person = structured.legislators[0];
+      const person = structured.legislators[0]!;
       expect(person?.image).toBeUndefined();
       expect(person?.current_role?.division_id).toBeUndefined();
 
-      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      const text = (getLegislatorsByLocation.format!(structured)[0]! as { text: string }).text;
       expect(text).toContain('Jane Smith');
       expect(text).not.toContain('**Photo:**');
       expect(text).not.toContain('**Division:**');
@@ -183,7 +183,7 @@ describe('getLegislatorsByLocation', () => {
       legislators: [],
     };
     const blocks = getLegislatorsByLocation.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('0 legislators found');
   });
 
@@ -205,7 +205,7 @@ describe('getLegislatorsByLocation', () => {
     });
 
     const run = async () => {
-      const ctx = createMockContext();
+      const ctx = createMockContext({ errors: getLegislatorsByLocation.errors });
       const input = getLegislatorsByLocation.input.parse({
         latitude: 47.6062,
         longitude: -122.3321,
@@ -232,7 +232,7 @@ describe('getLegislatorsByLocation', () => {
 
     it('labels each legislator tier in the rendered text', async () => {
       const { structured } = await run();
-      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      const text = (getLegislatorsByLocation.format!(structured)[0]! as { text: string }).text;
       expect(text).toContain('**2 legislators found** — 1 state, 1 federal (US Congress)');
       expect(text).toContain(
         'Washington (ocd-jurisdiction/country:us/state:wa/government) — state legislature',
@@ -246,7 +246,7 @@ describe('getLegislatorsByLocation', () => {
       const { structured } = await run();
       expect(structured.legislators[0]?.given_name).toBe('Jane');
       expect(structured.legislators[0]?.family_name).toBe('Smith');
-      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      const text = (getLegislatorsByLocation.format!(structured)[0]! as { text: string }).text;
       expect(text).toContain('**Given name:** Maria | **Family name:** Cantwell');
     });
 
@@ -257,7 +257,7 @@ describe('getLegislatorsByLocation', () => {
       });
       const { ctx, structured } = await run();
       expect(getEnrichment(ctx).federalCount).toBe(0);
-      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      const text = (getLegislatorsByLocation.format!(structured)[0]! as { text: string }).text;
       expect(text).toContain('**1 legislators found**\n');
       expect(text).not.toContain('federal');
     });
@@ -283,7 +283,7 @@ describe('getLegislatorsByLocation', () => {
       const { ctx, structured } = await run();
       expect(getEnrichment(ctx).stateCount).toBe(0);
       expect(getEnrichment(ctx).federalCount).toBe(0);
-      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      const text = (getLegislatorsByLocation.format!(structured)[0]! as { text: string }).text;
       expect(text).toContain(
         'Seattle (ocd-jurisdiction/country:us/state:wa/place:seattle/government) — municipality',
       );
@@ -300,7 +300,7 @@ describe('getLegislatorsByLocation', () => {
       expect(enrichment.count).toBe(1);
       expect(enrichment.stateCount).toBe(0);
       expect(enrichment.federalCount).toBe(0);
-      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      const text = (getLegislatorsByLocation.format!(structured)[0]! as { text: string }).text;
       expect(text).toContain('**Jurisdiction:** Somewhere (ocd-jurisdiction/x)\n');
       expect(text).not.toContain('legislature');
     });
@@ -331,7 +331,7 @@ describe('getLegislatorsByLocation', () => {
       const { ctx, structured } = await run();
       const enrichment = getEnrichment(ctx);
       expect(enrichment).toMatchObject({ count: 3, stateCount: 1, federalCount: 1 });
-      const text = (getLegislatorsByLocation.format!(structured)[0] as { text: string }).text;
+      const text = (getLegislatorsByLocation.format!(structured)[0]! as { text: string }).text;
       expect(text).toContain('**3 legislators found** — 1 state, 1 federal (US Congress)');
       expect(text).toContain(
         'Seattle (ocd-jurisdiction/country:us/state:wa/place:seattle/government) — municipality',

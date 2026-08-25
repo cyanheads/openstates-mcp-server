@@ -47,13 +47,13 @@ describe('searchPeople', () => {
   });
 
   it('returns legislators matching jurisdiction', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa' });
     const result = await searchPeople.handler(input, ctx);
     expect(result.results).toHaveLength(1);
-    expect(result.results[0].id).toBe('ocd-person/abc123');
-    expect(result.results[0].name).toBe('Jane Smith');
-    expect(result.results[0].party).toBe('Democratic');
+    expect(result.results[0]!.id).toBe('ocd-person/abc123');
+    expect(result.results[0]!.name).toBe('Jane Smith');
+    expect(result.results[0]!.party).toBe('Democratic');
   });
 
   /**
@@ -135,10 +135,10 @@ describe('searchPeople', () => {
   });
 
   it('returns results for name search', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', name: 'Smith' });
     const result = await searchPeople.handler(input, ctx);
-    expect(result.results[0].family_name).toBe('Smith');
+    expect(result.results[0]!.family_name).toBe('Smith');
   });
 
   it('returns empty results with enrichment notice when no legislators match', async () => {
@@ -146,7 +146,7 @@ describe('searchPeople', () => {
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', name: 'Nonexistent' });
     const result = await searchPeople.handler(input, ctx);
     expect(result.results).toHaveLength(0);
@@ -173,11 +173,11 @@ describe('searchPeople', () => {
       pagination: mockPeopleResult.pagination,
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({ jurisdiction: 'wa', include: ['offices'] });
     const result = await searchPeople.handler(input, ctx);
-    expect(result.results[0].offices).toBeDefined();
-    expect(result.results[0].offices?.[0].voice).toBe('360-786-7660');
+    expect(result.results[0]!.offices).toBeDefined();
+    expect(result.results[0]!.offices?.[0]?.voice).toBe('360-786-7660');
   });
 
   it('formats output with id, name, party, and jurisdiction', () => {
@@ -186,8 +186,8 @@ describe('searchPeople', () => {
       pagination: mockPeopleResult.pagination,
     };
     const blocks = searchPeople.format!(result);
-    expect(blocks[0].type).toBe('text');
-    const text = (blocks[0] as { text: string }).text;
+    expect(blocks[0]!.type).toBe('text');
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Jane Smith');
     expect(text).toContain('ocd-person/abc123');
     expect(text).toContain('Democratic');
@@ -213,7 +213,7 @@ describe('searchPeople', () => {
       pagination: mockPeopleResult.pagination,
     };
     const blocks = searchPeople.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Capitol Office');
     expect(text).toContain('360-786-7660');
   });
@@ -225,7 +225,7 @@ describe('searchPeople', () => {
       pagination: mockPeopleResult.pagination,
     };
     const blocks = searchPeople.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Jane Smith');
     // Should not throw on null current_role
     expect(text).toContain('ocd-person/abc123');
@@ -251,10 +251,10 @@ describe('searchPeople', () => {
         results: [enrichedPerson],
         pagination: mockPeopleResult.pagination,
       });
-      const ctx = createMockContext();
+      const ctx = createMockContext({ errors: searchPeople.errors });
       const input = searchPeople.input.parse({ jurisdiction: 'wa' });
       const structured = searchPeople.output.parse(await searchPeople.handler(input, ctx));
-      const person = structured.results[0];
+      const person = structured.results[0]!;
       expect(person?.image).toBe('https://data.openstates.org/images/small/ocd-person/abc123');
       expect(person?.current_role?.division_id).toBe('ocd-division/country:us/state:wa/sldu:37');
     });
@@ -264,18 +264,18 @@ describe('searchPeople', () => {
         results: [enrichedPerson],
         pagination: mockPeopleResult.pagination,
       });
-      const text = (blocks[0] as { text: string }).text;
+      const text = (blocks[0]! as { text: string }).text;
       expect(text).toContain('https://data.openstates.org/images/small/ocd-person/abc123');
       expect(text).toContain('ocd-division/country:us/state:wa/sldu:37');
     });
 
     it('omits both when upstream carries neither (sparse payload)', () => {
       const structured = searchPeople.output.parse(mockPeopleResult);
-      const person = structured.results[0];
+      const person = structured.results[0]!;
       expect(person?.image).toBeUndefined();
       expect(person?.current_role?.division_id).toBeUndefined();
 
-      const text = (searchPeople.format!(structured)[0] as { text: string }).text;
+      const text = (searchPeople.format!(structured)[0]! as { text: string }).text;
       expect(text).toContain('Jane Smith');
       expect(text).not.toContain('**Photo:**');
       expect(text).not.toContain('**Division:**');
@@ -296,14 +296,14 @@ describe('searchPeople', () => {
         pagination: mockPeopleResult.pagination,
       });
       expect(structured.results[0]?.current_role?.division_id).toBeNull();
-      const text = (searchPeople.format!(structured)[0] as { text: string }).text;
+      const text = (searchPeople.format!(structured)[0]! as { text: string }).text;
       expect(text).toContain('Delegate');
       expect(text).not.toContain('**Division:**');
     });
   });
 
   it('echoes applied filters in enrichment for self-verification', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchPeople.errors });
     const input = searchPeople.input.parse({
       jurisdiction: 'wa',
       name: 'Smith',

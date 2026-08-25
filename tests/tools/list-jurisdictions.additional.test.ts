@@ -38,7 +38,7 @@ describe('listJurisdictions — filters and pagination', () => {
   });
 
   it('default classification is state', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
     const input = listJurisdictions.input.parse({});
     await listJurisdictions.handler(input, ctx);
     expect(mockService.listJurisdictions).toHaveBeenCalledWith(
@@ -48,7 +48,7 @@ describe('listJurisdictions — filters and pagination', () => {
   });
 
   it('passes municipality classification to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
     const input = listJurisdictions.input.parse({ classification: 'municipality' });
     await listJurisdictions.handler(input, ctx);
     expect(mockService.listJurisdictions).toHaveBeenCalledWith(
@@ -58,7 +58,7 @@ describe('listJurisdictions — filters and pagination', () => {
   });
 
   it('passes country classification to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
     const input = listJurisdictions.input.parse({ classification: 'country' });
     await listJurisdictions.handler(input, ctx);
     expect(mockService.listJurisdictions).toHaveBeenCalledWith(
@@ -84,7 +84,7 @@ describe('listJurisdictions — filters and pagination', () => {
       results: [mockJurisdiction],
       pagination: { page: 1, per_page: 52, max_page: 1, total_items: 52 },
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
     const input = listJurisdictions.input.parse({});
     await listJurisdictions.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -98,7 +98,7 @@ describe('listJurisdictions — filters and pagination', () => {
       results: [],
       pagination: { page: 1, per_page: 52, max_page: 1, total_items: 0 },
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
     const input = listJurisdictions.input.parse({ classification: 'municipality' });
     const result = await listJurisdictions.handler(input, ctx);
     expect(result.results).toHaveLength(0);
@@ -107,7 +107,7 @@ describe('listJurisdictions — filters and pagination', () => {
   });
 
   it('passes include=latest_runs to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
     const input = listJurisdictions.input.parse({ include: ['latest_runs'] });
     await listJurisdictions.handler(input, ctx);
     expect(mockService.listJurisdictions).toHaveBeenCalledWith(
@@ -117,7 +117,7 @@ describe('listJurisdictions — filters and pagination', () => {
   });
 
   it('passes include=organizations to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
     const input = listJurisdictions.input.parse({ include: ['organizations'] });
     await listJurisdictions.handler(input, ctx);
     expect(mockService.listJurisdictions).toHaveBeenCalledWith(
@@ -134,7 +134,7 @@ describe('listJurisdictions — format edge cases', () => {
       pagination: { page: 1, per_page: 52, max_page: 1, total_items: 1 },
     };
     const blocks = listJurisdictions.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Washington');
     expect(text).toContain('ocd-jurisdiction/country:us/state:wa/government');
     expect(text).toContain('https://leg.wa.gov');
@@ -156,7 +156,7 @@ describe('listJurisdictions — format edge cases', () => {
       pagination: { page: 1, per_page: 52, max_page: 1, total_items: 2 },
     };
     const blocks = listJurisdictions.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Washington');
     expect(text).toContain('California');
     expect(text).toContain('2 jurisdictions');
@@ -168,7 +168,7 @@ describe('listJurisdictions — format edge cases', () => {
       pagination: { page: 1, per_page: 52, max_page: 1, total_items: 0 },
     };
     const blocks = listJurisdictions.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('0 jurisdictions');
   });
 
@@ -191,7 +191,7 @@ describe('listJurisdictions — format edge cases', () => {
       pagination: { page: 1, per_page: 52, max_page: 1, total_items: 1 },
     };
     const blocks = listJurisdictions.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('2025s1');
     expect(text).toContain('2025 Special Session 1');
     expect(text).toContain('special');
@@ -232,10 +232,10 @@ describe('listJurisdictions — include enrichment surfacing (organizations, lat
 
   it('carries organizations and latest_runs through the output schema', async () => {
     mockService.listJurisdictions.mockResolvedValue(enrichedResult);
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
     const input = listJurisdictions.input.parse({ include: ['organizations', 'latest_runs'] });
     const handlerResult = await listJurisdictions.handler(input, ctx);
-    const jur = listJurisdictions.output.parse(handlerResult).results[0];
+    const jur = listJurisdictions.output.parse(handlerResult).results[0]!;
     expect(jur.organizations).toEqual([
       { id: 'ocd-organization/senate', name: 'Washington State Senate', classification: 'upper' },
     ]);
@@ -247,7 +247,7 @@ describe('listJurisdictions — include enrichment surfacing (organizations, lat
   /** content[] path — format() rendered neither pre-fix. */
   it('renders organizations and latest_runs in format() text', () => {
     const blocks = listJurisdictions.format!(enrichedResult);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Washington State Senate');
     expect(text).toContain('upper');
     expect(text).toContain('ocd-organization/senate');
@@ -281,7 +281,9 @@ describe('listJurisdictions — out-of-range page', () => {
     const ctx = createMockContext({ errors: listJurisdictions.errors });
     const input = listJurisdictions.input.parse({ page: 99 });
 
-    const err = await listJurisdictions.handler(input, ctx).catch((e: unknown) => e);
+    const err = await Promise.resolve(listJurisdictions.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect((err as McpError).data).toMatchObject({
       reason: 'invalid_page',
@@ -316,7 +318,7 @@ describe('listJurisdictions — sessions with an empty classification or date (i
       results: [{ ...mockJurisdiction, legislative_sessions: [session] }],
       pagination,
     });
-    return (blocks[0] as { text: string }).text;
+    return (blocks[0]! as { text: string }).text;
   };
 
   const session = {

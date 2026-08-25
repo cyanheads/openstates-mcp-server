@@ -36,7 +36,7 @@ describe('getEvent', () => {
   });
 
   it('returns event detail by id', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1' });
     const result = await getEvent.handler(input, ctx);
     expect(result.id).toBe('ocd-event/evt-1');
@@ -54,11 +54,11 @@ describe('getEvent', () => {
     };
     mockService.getEvent.mockResolvedValue(eventWithParticipants);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: ['participants'] });
     const result = await getEvent.handler(input, ctx);
     expect(result.participants).toBeDefined();
-    expect(result.participants?.[0].role).toBe('host');
+    expect(result.participants?.[0]?.role).toBe('host');
   });
 
   it('includes agenda with related_entities when requested', async () => {
@@ -75,11 +75,11 @@ describe('getEvent', () => {
     };
     mockService.getEvent.mockResolvedValue(eventWithAgenda);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: ['agenda'] });
     const result = await getEvent.handler(input, ctx);
     expect(result.agenda).toBeDefined();
-    expect(result.agenda?.[0].related_entities[0].name).toBe('HB 1000');
+    expect(result.agenda?.[0]?.related_entities[0]?.name).toBe('HB 1000');
   });
 
   it('propagates not_found error from service', async () => {
@@ -91,8 +91,8 @@ describe('getEvent', () => {
 
   it('formats output with id, name, status, and jurisdiction', () => {
     const blocks = getEvent.format!(mockEvent);
-    expect(blocks[0].type).toBe('text');
-    const text = (blocks[0] as { text: string }).text;
+    expect(blocks[0]!.type).toBe('text');
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Transportation Committee Hearing');
     expect(text).toContain('ocd-event/evt-1');
     expect(text).toContain('passed');
@@ -108,7 +108,7 @@ describe('getEvent', () => {
       ],
     };
     const blocks = getEvent.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Committee on Transportation');
     expect(text).toContain('host');
     expect(text).toContain('organization');
@@ -127,7 +127,7 @@ describe('getEvent', () => {
       ],
     };
     const blocks = getEvent.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('HB 1000 hearing');
     expect(text).toContain('HB 1000');
     expect(text).toContain('bill');
@@ -136,7 +136,7 @@ describe('getEvent', () => {
   it('handles event without optional location', () => {
     const eventNoLocation = { ...mockEvent };
     const blocks = getEvent.format!(eventNoLocation);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     // Should not throw, no location line expected
     expect(text).toContain('ocd-event/evt-1');
   });

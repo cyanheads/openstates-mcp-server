@@ -47,7 +47,7 @@ describe('searchBills — pagination and filters', () => {
   });
 
   it('passes page and per_page to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({ jurisdiction: 'wa', page: 2, per_page: 5 });
     await searchBills.handler(input, ctx);
     expect(mockService.searchBills).toHaveBeenCalledWith(
@@ -58,7 +58,7 @@ describe('searchBills — pagination and filters', () => {
 
   it('enrichment reflects multi-page response', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({ jurisdiction: 'wa', page: 2, per_page: 5 });
     await searchBills.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -95,7 +95,7 @@ describe('searchBills — sort and chamber filters', () => {
   });
 
   it('passes sort=latest_action_desc to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({
       jurisdiction: 'wa',
       sort: 'latest_action_desc',
@@ -108,7 +108,7 @@ describe('searchBills — sort and chamber filters', () => {
   });
 
   it('passes chamber=upper to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({ jurisdiction: 'wa', chamber: 'upper' });
     await searchBills.handler(input, ctx);
     expect(mockService.searchBills).toHaveBeenCalledWith(
@@ -137,7 +137,7 @@ describe('searchBills — sort and chamber filters', () => {
 
   it('notice includes chamber filter when empty results', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({
       jurisdiction: 'wa',
       chamber: 'upper',
@@ -166,7 +166,7 @@ describe('searchBills — subject and sponsor filters', () => {
   });
 
   it('passes subject array to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({
       jurisdiction: 'wa',
       subject: ['public safety', 'education'],
@@ -179,7 +179,7 @@ describe('searchBills — subject and sponsor filters', () => {
   });
 
   it('passes empty subject array as undefined to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({ jurisdiction: 'wa', subject: [] });
     await searchBills.handler(input, ctx);
     expect(mockService.searchBills).toHaveBeenCalledWith(
@@ -189,7 +189,7 @@ describe('searchBills — subject and sponsor filters', () => {
   });
 
   it('passes sponsor filter to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({
       jurisdiction: 'wa',
       sponsor: 'ocd-person/abc123',
@@ -202,7 +202,7 @@ describe('searchBills — subject and sponsor filters', () => {
   });
 
   it('passes action_since filter to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({
       jurisdiction: 'wa',
       action_since: '2025-01-01',
@@ -215,7 +215,7 @@ describe('searchBills — subject and sponsor filters', () => {
   });
 
   it('passes updated_since filter to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({
       jurisdiction: 'wa',
       updated_since: '2025-03-01',
@@ -228,7 +228,7 @@ describe('searchBills — subject and sponsor filters', () => {
   });
 
   it('passes created_since filter to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({
       jurisdiction: 'wa',
       created_since: '2025-01-01',
@@ -258,7 +258,7 @@ describe('searchBills — format edge cases', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     };
     const blocks = searchBills.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('This bill improves public safety outcomes.');
     expect(text).toContain('Legislative Digest');
   });
@@ -283,7 +283,7 @@ describe('searchBills — format edge cases', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     };
     const blocks = searchBills.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Actions:');
     expect(text).toContain('First reading');
     expect(text).toContain('#1');
@@ -306,7 +306,7 @@ describe('searchBills — format edge cases', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     };
     const blocks = searchBills.format!(sparseResult);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('HB 1000');
     // No crashes from missing optional fields
     expect(text).not.toContain('Classification:');
@@ -332,7 +332,7 @@ describe('searchBills — format edge cases', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     };
     const blocks = searchBills.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Bob Jones');
     expect(text).toContain('Cosponsor');
   });
@@ -351,7 +351,7 @@ describe('searchBills — format edge cases', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 2 },
     };
     const blocks = searchBills.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('HB 1000');
     expect(text).toContain('SB 500');
     expect(text).toContain('2 bills');
@@ -417,7 +417,7 @@ describe('searchBills — include enrichment surfacing', () => {
   /**
    * structuredContent path. Parsing the handler result through the tool's own
    * output schema is the exact step that dropped the data pre-fix — Zod strips
-   * keys the schema does not declare, so before the fix `parsed.results[0]` had
+   * keys the schema does not declare, so before the fix `parsed.results[0]!` had
    * none of these seven fields and every assertion below failed.
    */
   it('retains every include enrichment through the output schema', async () => {
@@ -430,7 +430,7 @@ describe('searchBills — include enrichment surfacing', () => {
     };
     vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({
       jurisdiction: 'wa',
       include: [
@@ -445,7 +445,7 @@ describe('searchBills — include enrichment surfacing', () => {
     });
     const handlerResult = await searchBills.handler(input, ctx);
     const parsed = searchBills.output.parse(handlerResult);
-    const bill = parsed.results[0];
+    const bill = parsed.results[0]!;
 
     expect(bill.other_titles).toEqual([
       { title: 'An act concerning public safety', note: 'as introduced' },
@@ -454,14 +454,14 @@ describe('searchBills — include enrichment surfacing', () => {
     expect(bill.sources).toEqual([
       { url: 'https://leg.wa.gov/HB1000', note: 'Legislature bill page' },
     ]);
-    expect(bill.documents?.[0].links[0].url).toBe('https://leg.wa.gov/HB1000-fiscal.pdf');
-    expect(bill.versions?.[0].note).toBe('Substitute Bill');
-    expect(bill.votes?.[0].counts).toEqual([
+    expect(bill.documents?.[0]?.links[0]?.url).toBe('https://leg.wa.gov/HB1000-fiscal.pdf');
+    expect(bill.versions?.[0]?.note).toBe('Substitute Bill');
+    expect(bill.votes?.[0]?.counts).toEqual([
       { option: 'yes', value: 88 },
       { option: 'no', value: 9 },
     ]);
-    expect(bill.votes?.[0].votes[0].voter?.id).toBe('ocd-person/enrich');
-    expect(bill.related_bills?.[0].relation_type).toBe('companion');
+    expect(bill.votes?.[0]?.votes[0]?.voter?.id).toBe('ocd-person/enrich');
+    expect(bill.related_bills?.[0]?.relation_type).toBe('companion');
   });
 
   /**
@@ -475,7 +475,7 @@ describe('searchBills — include enrichment surfacing', () => {
       results: [enrichedBill],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('An act concerning public safety');
     expect(text).toContain('HB1000-2025');
     expect(text).toContain('lwrsn');
@@ -505,14 +505,14 @@ describe('searchBills — include enrichment surfacing', () => {
     };
 
     it('parses an entry that omits scheme through the output schema', () => {
-      const bill = searchBills.output.parse(pageWithSchemelessIdentifier).results[0];
+      const bill = searchBills.output.parse(pageWithSchemelessIdentifier).results[0]!;
       expect(bill.other_identifiers).toEqual([{ identifier: 'ocd-bill-wa-2025_2026-hb2073' }]);
       expect(bill.other_identifiers?.[0]?.scheme).toBeUndefined();
     });
 
     it('renders the identifier without an empty parenthetical', () => {
       const blocks = searchBills.format!(searchBills.output.parse(pageWithSchemelessIdentifier));
-      const text = (blocks[0] as { text: string }).text;
+      const text = (blocks[0]! as { text: string }).text;
       expect(text).toContain('- ocd-bill-wa-2025_2026-hb2073');
       expect(text).not.toContain('undefined');
       expect(text).not.toContain('()');
@@ -558,7 +558,7 @@ describe('searchBills — zero-result recovery names every filter', () => {
 
   it('echoes subject, sponsor, and sponsor_classification in appliedFilters', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     await searchBills.handler(searchBills.input.parse(everyFilter), ctx);
     expect(getEnrichment(ctx).appliedFilters).toEqual({
       ...everyFilter,
@@ -569,7 +569,7 @@ describe('searchBills — zero-result recovery names every filter', () => {
 
   it('names every narrowing filter in the notice', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     await searchBills.handler(searchBills.input.parse(everyFilter), ctx);
     const notice = getEnrichment(ctx).notice as string;
     expect(notice).toContain('jurisdiction="wa"');
@@ -592,7 +592,7 @@ describe('searchBills — zero-result recovery names every filter', () => {
    */
   it('leaves sort, page, per_page, and include out of the notice', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({
       jurisdiction: 'wa',
       per_page: 3,
@@ -614,7 +614,7 @@ describe('searchBills — zero-result recovery names every filter', () => {
    */
   it('omits a subject filter that arrived as an empty array', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     await searchBills.handler(searchBills.input.parse({ jurisdiction: 'wa', subject: [] }), ctx);
     const applied = getEnrichment(ctx).appliedFilters as Record<string, unknown>;
     expect(applied.subject).toBeUndefined();
@@ -630,7 +630,7 @@ describe('searchBills — zero-result recovery names every filter', () => {
    */
   it('names an unrecognized jurisdiction as the likely cause', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     await searchBills.handler(searchBills.input.parse({ jurisdiction: 'notastate' }), ctx);
     const notice = getEnrichment(ctx).notice as string;
     expect(notice).toContain('jurisdiction="notastate"');
@@ -644,7 +644,7 @@ describe('searchBills — zero-result recovery names every filter', () => {
 
   it('keeps the generic hint for a recognized jurisdiction that simply matched nothing', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     await searchBills.handler(
       searchBills.input.parse({
         jurisdiction: 'ocd-jurisdiction/country:us/district:dc/government',
@@ -658,7 +658,7 @@ describe('searchBills — zero-result recovery names every filter', () => {
 
   it('keeps the session hint when a recognized jurisdiction is filtered by session', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     await searchBills.handler(
       searchBills.input.parse({ jurisdiction: 'Washington', session: '2025-2026' }),
       ctx,
@@ -670,7 +670,7 @@ describe('searchBills — zero-result recovery names every filter', () => {
   /** A q-only search has no jurisdiction to diagnose — the generic hint is all that applies. */
   it('does not diagnose a jurisdiction when none was supplied', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     await searchBills.handler(searchBills.input.parse({ q: 'zzqqxxnomatch' }), ctx);
     const notice = getEnrichment(ctx).notice as string;
     expect(notice).toContain('q="zzqqxxnomatch"');
@@ -703,7 +703,7 @@ describe('searchBills — out-of-range page', () => {
     const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({ jurisdiction: 'wa', page: 99 });
 
-    const err = await searchBills.handler(input, ctx).catch((e: unknown) => e);
+    const err = await Promise.resolve(searchBills.handler(input, ctx)).catch((e: unknown) => e);
 
     expect((err as McpError).data).toMatchObject({
       reason: 'invalid_page',
@@ -737,7 +737,7 @@ describe('searchBills format — empty abstract note renders no stray punctuatio
 
   const render = (bill: Record<string, unknown>) => {
     const blocks = searchBills.format!({ results: [{ ...mockBill, ...bill }], pagination });
-    return (blocks[0] as { text: string }).text;
+    return (blocks[0]! as { text: string }).text;
   };
 
   it('drops the abstract parenthetical when note is empty', () => {
@@ -767,7 +767,7 @@ describe('searchBills format — version and document note/date composition (iss
 
   const renderLines = (bill: Record<string, unknown>) => {
     const blocks = searchBills.format!({ results: [{ ...mockBill, ...bill }], pagination });
-    return (blocks[0] as { text: string }).text.split('\n');
+    return (blocks[0]! as { text: string }).text.split('\n');
   };
 
   const renderVersion = (note: string, date: string) =>
@@ -825,7 +825,7 @@ describe('searchBills — empty vote start_date and action date (issue #43)', ()
 
   const renderLines = (bill: Record<string, unknown>) => {
     const blocks = searchBills.format!({ results: [{ ...mockBill, ...bill }], pagination });
-    return (blocks[0] as { text: string }).text.split('\n');
+    return (blocks[0]! as { text: string }).text.split('\n');
   };
 
   const vote = (start_date: string) => ({

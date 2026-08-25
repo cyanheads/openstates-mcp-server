@@ -105,7 +105,7 @@ describe('getLegislatorsByLocation — include forwarding', () => {
   });
 
   it('passes include=offices to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getLegislatorsByLocation.errors });
     const input = getLegislatorsByLocation.input.parse({
       latitude: 47.6,
       longitude: -122.3,
@@ -121,15 +121,15 @@ describe('getLegislatorsByLocation — include forwarding', () => {
   });
 
   it('returns offices in result when include=offices', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getLegislatorsByLocation.errors });
     const input = getLegislatorsByLocation.input.parse({
       latitude: 47.6,
       longitude: -122.3,
       include: ['offices'],
     });
     const result = await getLegislatorsByLocation.handler(input, ctx);
-    expect(result.legislators[0].offices).toBeDefined();
-    expect(result.legislators[0].offices?.[0].voice).toBe('555-0100');
+    expect(result.legislators[0]!.offices).toBeDefined();
+    expect(result.legislators[0]!.offices?.[0]?.voice).toBe('555-0100');
   });
 });
 
@@ -151,7 +151,7 @@ describe('getLegislatorsByLocation — format with offices', () => {
       ],
     };
     const blocks = getLegislatorsByLocation.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Capitol Office');
     expect(text).toContain('360-786-7660');
     expect(text).toContain('PO Box 40437');
@@ -168,7 +168,7 @@ describe('getLegislatorsByLocation — format with offices', () => {
       ],
     };
     const blocks = getLegislatorsByLocation.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('jane@leg.wa.gov');
     expect(text).toContain('https://openstates.org/person/jane-smith/');
   });
@@ -223,14 +223,14 @@ describe('getLegislatorsByLocation — include enrichment surfacing', () => {
     };
     vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getLegislatorsByLocation.errors });
     const input = getLegislatorsByLocation.input.parse({
       latitude: 47.6,
       longitude: -122.3,
       include: ['other_names', 'other_identifiers', 'sources'],
     });
     const handlerResult = await getLegislatorsByLocation.handler(input, ctx);
-    const person = getLegislatorsByLocation.output.parse(handlerResult).legislators[0];
+    const person = getLegislatorsByLocation.output.parse(handlerResult).legislators[0]!;
 
     expect(person.other_names).toEqual([{ name: 'Jane A. Smith', note: 'ballot name' }]);
     expect(person.other_identifiers).toEqual([
@@ -244,7 +244,7 @@ describe('getLegislatorsByLocation — include enrichment surfacing', () => {
   /** content[] path. format() rendered none of these three pre-fix. */
   it('renders other_names/other_identifiers/sources in format() text', () => {
     const blocks = getLegislatorsByLocation.format!({ legislators: [enrichedPerson] });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Jane A. Smith');
     expect(text).toContain('ballot name');
     expect(text).toContain('WA000123');
@@ -270,7 +270,7 @@ describe('getLegislatorsByLocation — link rendering with an empty note', () =>
 
   it('renders the URL alone when the note is empty', () => {
     const blocks = getLegislatorsByLocation.format!({ legislators: [personWithLinks] });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain(
       '**Links:** https://housedemocrats.example.gov/thomas/, https://leg.example.gov/members/thomas',
     );
@@ -289,7 +289,7 @@ describe('getLegislatorsByLocation — link rendering with an empty note', () =>
         },
       ],
     });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain(
       '**Links:** official page: https://leg.example.gov/members/thomas, https://housedemocrats.example.gov/thomas/',
     );

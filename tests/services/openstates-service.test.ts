@@ -24,8 +24,8 @@ import {
 import type { PersonListResponse, RawPerson } from '@/services/openstates/types.js';
 
 // Minimal stubs so the constructor doesn't blow up.
-const fakeAppConfig = {} as Parameters<typeof OpenStatesApiService.prototype.constructor>[0];
-const fakeStorage = {} as Parameters<typeof OpenStatesApiService.prototype.constructor>[1];
+const fakeAppConfig = {} as ConstructorParameters<typeof OpenStatesApiService>[0];
+const fakeStorage = {} as ConstructorParameters<typeof OpenStatesApiService>[1];
 const fakeServerConfig = {
   apiKey: 'test-key',
   apiBaseUrl: 'https://v3.openstates.org',
@@ -43,11 +43,11 @@ describe('normalizeParty (via normalizePerson)', () => {
    * Build a minimal RawPerson to drive normalizePerson.
    */
   function makeRaw(party: RawPerson['party']): RawPerson {
-    return {
+    const person = {
       id: 'ocd-person/test',
       name: 'Test Person',
-      party,
     };
+    return party === undefined ? person : { ...person, party };
   }
 
   it('returns empty string when party is falsy', () => {
@@ -240,7 +240,7 @@ function jsonResponse(status: number, body: unknown): Response {
  */
 const abortRejectingFetch = () =>
   vi.fn(
-    (_input: RequestInfo | URL, init?: RequestInit) =>
+    (_input: string | URL | Request, init?: RequestInit) =>
       new Promise<Response>((_resolve, reject) => {
         const signal = init?.signal;
         if (signal?.aborted) {
@@ -262,7 +262,7 @@ function stubPeopleEndpoint(): URLSearchParams[] {
   const requests: URLSearchParams[] = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn((input: RequestInfo | URL) => {
+    vi.fn((input: string | URL | Request) => {
       const url = new URL(String(input));
       requests.push(url.searchParams);
 
@@ -594,7 +594,7 @@ describe('normalizePerson — include enrichment survives normalization', () => 
   function stubEnrichmentPerson(): void {
     vi.stubGlobal(
       'fetch',
-      vi.fn((input: RequestInfo | URL) => {
+      vi.fn((input: string | URL | Request) => {
         const isGeo = new URL(String(input)).pathname.endsWith('/people.geo');
         return Promise.resolve(
           jsonResponse(
@@ -692,7 +692,7 @@ function stubCommitteesEndpoint(): URLSearchParams[] {
   const requests: URLSearchParams[] = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn((input: RequestInfo | URL) => {
+    vi.fn((input: string | URL | Request) => {
       const url = new URL(String(input));
       requests.push(url.searchParams);
       return Promise.resolve(
@@ -899,7 +899,7 @@ function stubJurisdictionsEndpoint(pool: ReturnType<typeof makeJurisdiction>[]):
   const requests: URLSearchParams[] = [];
   vi.stubGlobal(
     'fetch',
-    vi.fn((input: RequestInfo | URL) => {
+    vi.fn((input: string | URL | Request) => {
       const url = new URL(String(input));
       requests.push(url.searchParams);
       const perPage = Number(url.searchParams.get('per_page'));
@@ -1188,7 +1188,7 @@ describe('fetchJson — caching and rate-limit fail-fast', () => {
   /**
    * Caller cancellation is not a statement about the query. Relabelling it `upstream_timeout`
    * would tell an agent to narrow a search that was never actually run, so the abort has to pass
-   * through with its own classification.
+   * through with its own classification and stop before the transport call.
    */
   it('does not relabel a caller-cancelled request as an upstream timeout', async () => {
     const fetchMock = abortRejectingFetch();
@@ -1208,7 +1208,7 @@ describe('fetchJson — caching and rate-limit fail-fast', () => {
 
     expect(err).toBeInstanceOf(Error);
     expect((err as McpError).data?.['reason']).not.toBe('upstream_timeout');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('trips the fail-fast budget guard once the daily budget is spent, before any upstream call', async () => {

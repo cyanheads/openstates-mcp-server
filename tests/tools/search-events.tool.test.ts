@@ -43,12 +43,12 @@ describe('searchEvents', () => {
   });
 
   it('returns events for a jurisdiction', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchEvents.errors });
     const input = searchEvents.input.parse({ jurisdiction: 'wa' });
     const result = await searchEvents.handler(input, ctx);
     expect(result.results).toHaveLength(1);
-    expect(result.results[0].id).toBe('ocd-event/evt-1');
-    expect(result.results[0].name).toBe('Transportation Committee Hearing');
+    expect(result.results[0]!.id).toBe('ocd-event/evt-1');
+    expect(result.results[0]!.name).toBe('Transportation Committee Hearing');
   });
 
   /**
@@ -94,7 +94,7 @@ describe('searchEvents', () => {
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchEvents.errors });
     const input = searchEvents.input.parse({ jurisdiction: 'wa' });
     const result = await searchEvents.handler(input, ctx);
     expect(result.results).toHaveLength(0);
@@ -105,7 +105,7 @@ describe('searchEvents', () => {
   });
 
   it('passes date range filters to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchEvents.errors });
     const input = searchEvents.input.parse({
       jurisdiction: 'wa',
       after: '2025-03-01',
@@ -135,11 +135,11 @@ describe('searchEvents', () => {
       pagination: mockEventResult.pagination,
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchEvents.errors });
     const input = searchEvents.input.parse({ jurisdiction: 'wa', include: ['agenda'] });
     const result = await searchEvents.handler(input, ctx);
-    expect(result.results[0].agenda).toBeDefined();
-    expect(result.results[0].agenda?.[0].description).toContain('HB 1000');
+    expect(result.results[0]!.agenda).toBeDefined();
+    expect(result.results[0]!.agenda?.[0]?.description).toContain('HB 1000');
   });
 
   it('formats output with event id, name, and jurisdiction', () => {
@@ -148,8 +148,8 @@ describe('searchEvents', () => {
       pagination: mockEventResult.pagination,
     };
     const blocks = searchEvents.format!(result);
-    expect(blocks[0].type).toBe('text');
-    const text = (blocks[0] as { text: string }).text;
+    expect(blocks[0]!.type).toBe('text');
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Transportation Committee Hearing');
     expect(text).toContain('ocd-event/evt-1');
     expect(text).toContain('Washington');
@@ -175,7 +175,7 @@ describe('searchEvents', () => {
       pagination: mockEventResult.pagination,
     };
     const blocks = searchEvents.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('HB 1000 — Public Safety');
     expect(text).toContain('HB 1000');
     expect(text).toContain('bill');
@@ -187,12 +187,12 @@ describe('searchEvents', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
     };
     const blocks = searchEvents.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('0 events');
   });
 
   it('echoes applied filters in enrichment for self-verification', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchEvents.errors });
     const input = searchEvents.input.parse({
       jurisdiction: 'wa',
       after: '2025-03-01',
@@ -250,14 +250,14 @@ describe('searchEvents — include enrichment surfacing (links, sources, media, 
     const mockService = { searchEvents: vi.fn().mockResolvedValue(enrichedResult) };
     vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchEvents.errors });
     const input = searchEvents.input.parse({
       jurisdiction: 'wa',
       include: ['links', 'sources', 'media', 'documents'],
     });
     const handlerResult = await searchEvents.handler(input, ctx);
     const parsed = searchEvents.output.parse(handlerResult);
-    const event = parsed.results[0];
+    const event = parsed.results[0]!;
     expect(event.links).toEqual([{ note: 'Hearing notice', url: 'https://leg.wa.gov/notice' }]);
     expect(event.sources).toEqual([
       { url: 'https://leg.wa.gov/source', note: 'official calendar' },
@@ -269,7 +269,7 @@ describe('searchEvents — include enrichment surfacing (links, sources, media, 
   /** content[] path — format() rendered none of these pre-fix. */
   it('renders links, sources, media, and documents in format() text', () => {
     const blocks = searchEvents.format!(enrichedResult);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Hearing notice');
     expect(text).toContain('https://leg.wa.gov/notice');
     expect(text).toContain('https://leg.wa.gov/source');
@@ -305,18 +305,18 @@ describe('searchEvents — participant without upstream role (issue #19)', () =>
     const mockService = { searchEvents: vi.fn().mockResolvedValue(rolelessResult) };
     vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchEvents.errors });
     const input = searchEvents.input.parse({ jurisdiction: 'ca', include: ['participants'] });
     const handlerResult = await searchEvents.handler(input, ctx);
     const parsed = searchEvents.output.parse(handlerResult);
-    expect(parsed.results[0].participants).toHaveLength(2);
-    expect(parsed.results[0].participants?.[0].role).toBe('host');
-    expect(parsed.results[0].participants?.[1].role).toBeUndefined();
+    expect(parsed.results[0]!.participants).toHaveLength(2);
+    expect(parsed.results[0]!.participants?.[0]?.role).toBe('host');
+    expect(parsed.results[0]!.participants?.[1]?.role).toBeUndefined();
   });
 
   it('renders a role-less participant without printing "undefined"', () => {
     const blocks = searchEvents.format!(rolelessResult);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Jane Doe');
     expect(text).not.toContain('undefined');
   });
@@ -335,7 +335,7 @@ describe('searchEvents — link, media, and document rendering with an empty not
       searchEvents.format!({
         results: [{ ...mockEvent, ...event }],
         pagination,
-      })[0] as { text: string }
+      })[0]! as { text: string }
     ).text;
 
   it('renders a link URL alone when the note is empty', () => {
@@ -392,7 +392,7 @@ describe('searchEvents — out-of-range page', () => {
     const ctx = createMockContext({ errors: searchEvents.errors });
     const input = searchEvents.input.parse({ jurisdiction: 'wa', page: 99, per_page: 3 });
 
-    const err = await searchEvents.handler(input, ctx).catch((e: unknown) => e);
+    const err = await Promise.resolve(searchEvents.handler(input, ctx)).catch((e: unknown) => e);
 
     expect((err as McpError).data).toMatchObject({
       reason: 'invalid_page',

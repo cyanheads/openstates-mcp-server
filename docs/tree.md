@@ -1,10 +1,9 @@
 # openstates-mcp-server - Directory Structure
 
-Generated on: 2026-07-31 13:09:39
+Generated on: 2026-08-25 05:18:53
 
 ```text
 openstates-mcp-server/
-├── .claude/
 ├── .claude-plugin/
 │   └── plugin.json
 ├── .codex-plugin/

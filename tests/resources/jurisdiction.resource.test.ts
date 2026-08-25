@@ -41,8 +41,11 @@ describe('jurisdictionResource', () => {
   });
 
   it('returns jurisdiction data for a valid abbreviation', async () => {
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = jurisdictionResource.params.parse({ jurisdiction_id: 'wa' });
+    const ctx = createMockContext({
+      tenantId: 'test-tenant',
+      errors: jurisdictionResource.errors,
+    });
+    const params = jurisdictionResource.params!.parse({ jurisdiction_id: 'wa' });
     const result = await jurisdictionResource.handler(params, ctx);
     expect(result).toBeDefined();
     expect((result as typeof mockJurisdiction).id).toBe(
@@ -52,8 +55,11 @@ describe('jurisdictionResource', () => {
   });
 
   it('always requests legislative_sessions include', async () => {
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = jurisdictionResource.params.parse({ jurisdiction_id: 'wa' });
+    const ctx = createMockContext({
+      tenantId: 'test-tenant',
+      errors: jurisdictionResource.errors,
+    });
+    const params = jurisdictionResource.params!.parse({ jurisdiction_id: 'wa' });
     await jurisdictionResource.handler(params, ctx);
     expect(mockService.getJurisdiction).toHaveBeenCalledWith(
       'wa',
@@ -72,7 +78,7 @@ describe('jurisdictionResource', () => {
       }),
     );
     const ctx = createMockContext({ errors: jurisdictionResource.errors });
-    const params = jurisdictionResource.params.parse({
+    const params = jurisdictionResource.params!.parse({
       jurisdiction_id: 'not-a-real-jurisdiction',
     });
     await expect(jurisdictionResource.handler(params, ctx)).rejects.toMatchObject({
@@ -93,7 +99,7 @@ describe('jurisdictionResource', () => {
       new McpError(JsonRpcErrorCode.ServiceUnavailable, 'Open States API unavailable.'),
     );
     const ctx = createMockContext({ errors: jurisdictionResource.errors });
-    const params = jurisdictionResource.params.parse({ jurisdiction_id: 'wa' });
+    const params = jurisdictionResource.params!.parse({ jurisdiction_id: 'wa' });
     await expect(jurisdictionResource.handler(params, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.ServiceUnavailable,
     });
@@ -101,13 +107,17 @@ describe('jurisdictionResource', () => {
 
   it('propagates network errors from service', async () => {
     mockService.getJurisdiction.mockRejectedValue(new Error('Service unavailable'));
-    const ctx = createMockContext({ tenantId: 'test-tenant' });
-    const params = jurisdictionResource.params.parse({ jurisdiction_id: 'wa' });
+    const ctx = createMockContext({
+      tenantId: 'test-tenant',
+      errors: jurisdictionResource.errors,
+    });
+    const params = jurisdictionResource.params!.parse({ jurisdiction_id: 'wa' });
     await expect(jurisdictionResource.handler(params, ctx)).rejects.toThrow('Service unavailable');
   });
 
   it('lists sample resources from list()', async () => {
-    const listing = await jurisdictionResource.list!();
+    const listContext = {} as Parameters<NonNullable<typeof jurisdictionResource.list>>[0];
+    const listing = await jurisdictionResource.list!(listContext);
     expect(listing.resources).toBeInstanceOf(Array);
     expect(listing.resources.length).toBeGreaterThan(0);
     for (const r of listing.resources) {

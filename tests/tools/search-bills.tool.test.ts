@@ -46,12 +46,12 @@ describe('searchBills', () => {
   });
 
   it('returns bills for a valid jurisdiction', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({ jurisdiction: 'wa' });
     const result = await searchBills.handler(input, ctx);
     expect(result.results).toHaveLength(1);
-    expect(result.results[0].id).toBe('ocd-bill/12345');
-    expect(result.results[0].identifier).toBe('HB 1000');
+    expect(result.results[0]!.id).toBe('ocd-bill/12345');
+    expect(result.results[0]!.identifier).toBe('HB 1000');
     expect(result.pagination.total_items).toBe(1);
     const enrichment = getEnrichment(ctx);
     expect(enrichment.totalCount).toBe(1);
@@ -60,7 +60,7 @@ describe('searchBills', () => {
   });
 
   it('returns bills for a full-text query', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({ q: 'public safety' });
     const result = await searchBills.handler(input, ctx);
     expect(result.results).toHaveLength(1);
@@ -148,7 +148,7 @@ describe('searchBills', () => {
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({ jurisdiction: 'wa' });
     const result = await searchBills.handler(input, ctx);
     expect(result.results).toHaveLength(0);
@@ -211,16 +211,16 @@ describe('searchBills', () => {
       pagination: mockBillListResult.pagination,
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({
       jurisdiction: 'wa',
       include: ['sponsorships', 'actions'],
     });
     const result = await searchBills.handler(input, ctx);
-    expect(result.results[0].sponsorships).toBeDefined();
-    expect(result.results[0].actions).toBeDefined();
-    expect(result.results[0].sponsorships?.[0].name).toBe('Jane Smith');
-    expect(result.results[0].actions?.[0].description).toBe('First reading');
+    expect(result.results[0]!.sponsorships).toBeDefined();
+    expect(result.results[0]!.actions).toBeDefined();
+    expect(result.results[0]!.sponsorships?.[0]?.name).toBe('Jane Smith');
+    expect(result.results[0]!.actions?.[0]?.description).toBe('First reading');
   });
 
   it('formats output with bill id, identifier, and jurisdiction', () => {
@@ -229,8 +229,8 @@ describe('searchBills', () => {
       pagination: mockBillListResult.pagination,
     };
     const blocks = searchBills.format!(result);
-    expect(blocks[0].type).toBe('text');
-    const text = (blocks[0] as { text: string }).text;
+    expect(blocks[0]!.type).toBe('text');
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('HB 1000');
     expect(text).toContain('ocd-bill/12345');
     expect(text).toContain('Washington');
@@ -244,7 +244,7 @@ describe('searchBills', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
     };
     const blocks = searchBills.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('0 bills');
   });
 
@@ -275,13 +275,13 @@ describe('searchBills', () => {
         results: [enrichedBill],
         pagination: mockBillListResult.pagination,
       });
-      const ctx = createMockContext();
+      const ctx = createMockContext({ errors: searchBills.errors });
       const input = searchBills.input.parse({ jurisdiction: 'wa', include: ['sponsorships'] });
 
       // Parse through the output schema — the framework builds structuredContent from it, and
       // anything undeclared is dropped there rather than at the handler boundary.
       const structured = searchBills.output.parse(await searchBills.handler(input, ctx));
-      const bill = structured.results[0];
+      const bill = structured.results[0]!;
 
       expect(bill?.openstates_url).toBe('https://openstates.org/wa/bills/2025-2026/HB1000/');
       expect(bill?.updated_at).toBe('2026-07-15T12:02:32Z');
@@ -296,24 +296,24 @@ describe('searchBills', () => {
         results: [enrichedBill],
         pagination: mockBillListResult.pagination,
       });
-      const text = (blocks[0] as { text: string }).text;
+      const text = (blocks[0]! as { text: string }).text;
       expect(text).toContain('https://openstates.org/wa/bills/2025-2026/HB1000/');
       expect(text).toContain('2026-07-15T12:02:32Z');
       expect(text).toContain('ocd-person/parshley');
     });
 
     it('omits all three when upstream provides none (sparse payload)', () => {
-      const sparseSponsorship = { ...enrichedBill.sponsorships[0], person: undefined };
+      const sparseSponsorship = { ...enrichedBill.sponsorships[0]!, person: undefined };
       const structured = searchBills.output.parse({
         results: [{ ...mockBill, sponsorships: [sparseSponsorship] }],
         pagination: mockBillListResult.pagination,
       });
-      const bill = structured.results[0];
+      const bill = structured.results[0]!;
       expect(bill?.openstates_url).toBeUndefined();
       expect(bill?.updated_at).toBeUndefined();
       expect(bill?.sponsorships?.[0]?.person).toBeUndefined();
 
-      const text = (searchBills.format!(structured)[0] as { text: string }).text;
+      const text = (searchBills.format!(structured)[0]! as { text: string }).text;
       expect(text).toContain('HB 1000');
       expect(text).not.toContain('**URL:**');
       expect(text).not.toContain('**Updated:**');
@@ -340,7 +340,7 @@ describe('searchBills', () => {
       pagination: mockBillListResult.pagination,
     };
     const blocks = searchBills.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Jane Smith');
   });
 
@@ -368,13 +368,13 @@ describe('searchBills', () => {
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     };
     const blocks = searchBills.format!(sparseResult);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('ocd-bill/sparse');
     expect(text).toContain('SB 5');
   });
 
   it('echoes applied filters in enrichment for self-verification', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({
       jurisdiction: 'wa',
       session: '2025-2026',
@@ -401,7 +401,7 @@ describe('searchBills', () => {
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchBills.errors });
     const input = searchBills.input.parse({ jurisdiction: 'wa', q: 'budget' });
     await searchBills.handler(input, ctx);
     expect(getEnrichment(ctx).appliedFilters).toMatchObject({ jurisdiction: 'wa', q: 'budget' });

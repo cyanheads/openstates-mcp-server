@@ -13,7 +13,6 @@ import {
   timeout,
 } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
-import type { RequestContext } from '@cyanheads/mcp-ts-core/utils';
 import { fetchWithTimeout, logger, RateLimiter, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import type { ServerConfig } from '@/config/server-config.js';
 import { normalizeCommitteeJurisdiction } from './jurisdiction-inventory.js';
@@ -179,22 +178,6 @@ function upstreamDetail(body: unknown): string | undefined {
 function redactedUrl(url: string): string {
   const { origin, pathname } = new URL(url);
   return `${origin}${pathname}`;
-}
-
-/**
- * Log bindings for `fetchWithTimeout`. The handler-facing `Context` carries no index signature,
- * so it is not assignable to the open `RequestContext` bag the helper takes — project the
- * correlation fields explicitly rather than casting.
- */
-function fetchLogContext(ctx: Context): RequestContext {
-  return {
-    requestId: ctx.requestId,
-    timestamp: ctx.timestamp,
-    tenantId: ctx.tenantId,
-    traceId: ctx.traceId,
-    spanId: ctx.spanId,
-    operation: 'OpenStatesApiService.fetchJson',
-  };
 }
 
 /**
@@ -382,19 +365,14 @@ export class OpenStatesApiService {
       this.requestTimeoutMs,
     );
     try {
-      return await fetchWithTimeout(
-        url,
-        this.requestTimeoutMs * FETCH_BACKSTOP_MULTIPLIER,
-        fetchLogContext(ctx),
-        {
-          headers: {
-            'X-API-KEY': this.apiKey,
-            Accept: 'application/json',
-          },
-          signal: AbortSignal.any([deadline.signal, budgetSignal, ctx.signal]),
-          expectedStatuses: EXPECTED_UPSTREAM_STATUSES,
+      return await fetchWithTimeout(url, this.requestTimeoutMs * FETCH_BACKSTOP_MULTIPLIER, ctx, {
+        headers: {
+          'X-API-KEY': this.apiKey,
+          Accept: 'application/json',
         },
-      );
+        signal: AbortSignal.any([deadline.signal, budgetSignal, ctx.signal]),
+        expectedStatuses: EXPECTED_UPSTREAM_STATUSES,
+      });
     } catch (err) {
       // Deadline first: when both have fired, the per-attempt ceiling is the tighter, more
       // specific fact about this request.

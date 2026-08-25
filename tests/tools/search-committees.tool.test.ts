@@ -36,12 +36,12 @@ describe('searchCommittees', () => {
   });
 
   it('returns committees for a jurisdiction', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchCommittees.errors });
     const input = searchCommittees.input.parse({ jurisdiction: 'wa' });
     const result = await searchCommittees.handler(input, ctx);
     expect(result.results).toHaveLength(1);
-    expect(result.results[0].id).toBe('ocd-organization/comm-1');
-    expect(result.results[0].name).toBe('Committee on Transportation');
+    expect(result.results[0]!.id).toBe('ocd-organization/comm-1');
+    expect(result.results[0]!.name).toBe('Committee on Transportation');
     const enrichment = getEnrichment(ctx);
     expect(enrichment.coverageNote).toBeDefined();
     expect(enrichment.coverageNote).toContain('experimental');
@@ -102,15 +102,15 @@ describe('searchCommittees', () => {
       pagination: mockCommitteeResult.pagination,
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchCommittees.errors });
     const input = searchCommittees.input.parse({ jurisdiction: 'wa', include: ['memberships'] });
     const result = await searchCommittees.handler(input, ctx);
-    expect(result.results[0].memberships).toBeDefined();
-    expect(result.results[0].memberships?.[0].role).toBe('chair');
+    expect(result.results[0]!.memberships).toBeDefined();
+    expect(result.results[0]!.memberships?.[0]?.role).toBe('chair');
   });
 
   it('filters by chamber when provided', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchCommittees.errors });
     const input = searchCommittees.input.parse({ jurisdiction: 'wa', chamber: 'upper' });
     await searchCommittees.handler(input, ctx);
     expect(mockService.searchCommittees).toHaveBeenCalledWith(
@@ -123,7 +123,7 @@ describe('searchCommittees', () => {
     // The tool passes jurisdiction through verbatim; the service normalizes the name to an
     // abbreviation before the request. This guards the tool→service boundary for the shape that
     // previously produced an upstream 500.
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchCommittees.errors });
     const input = searchCommittees.input.parse({ jurisdiction: 'Texas', chamber: 'upper' });
     await searchCommittees.handler(input, ctx);
     expect(mockService.searchCommittees).toHaveBeenCalledWith(
@@ -137,7 +137,7 @@ describe('searchCommittees', () => {
       results: [],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchCommittees.errors });
     const input = searchCommittees.input.parse({ jurisdiction: 'wa' });
     await searchCommittees.handler(input, ctx);
     const enrichment = getEnrichment(ctx);
@@ -150,8 +150,8 @@ describe('searchCommittees', () => {
       pagination: mockCommitteeResult.pagination,
     };
     const blocks = searchCommittees.format!(result);
-    expect(blocks[0].type).toBe('text');
-    const text = (blocks[0] as { text: string }).text;
+    expect(blocks[0]!.type).toBe('text');
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Committee on Transportation');
     expect(text).toContain('ocd-organization/comm-1');
     expect(text).toContain('1 committees');
@@ -168,14 +168,14 @@ describe('searchCommittees', () => {
       pagination: mockCommitteeResult.pagination,
     };
     const blocks = searchCommittees.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Jane Smith');
     expect(text).toContain('chair');
     expect(text).toContain('ocd-person/abc');
   });
 
   it('echoes applied filters in enrichment for self-verification', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchCommittees.errors });
     const input = searchCommittees.input.parse({
       jurisdiction: 'wa',
       classification: 'subcommittee',
@@ -218,13 +218,13 @@ describe('searchCommittees — include enrichment surfacing (links, sources)', (
     };
     vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: searchCommittees.errors });
     const input = searchCommittees.input.parse({
       jurisdiction: 'tx',
       include: ['links', 'sources'],
     });
     const handlerResult = await searchCommittees.handler(input, ctx);
-    const committee = searchCommittees.output.parse(handlerResult).results[0];
+    const committee = searchCommittees.output.parse(handlerResult).results[0]!;
 
     expect(committee.links).toEqual([{ note: 'homepage', url: 'https://committee.example.gov' }]);
     expect(committee.sources).toEqual([
@@ -238,7 +238,7 @@ describe('searchCommittees — include enrichment surfacing (links, sources)', (
       results: [enrichedCommittee],
       pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
     });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('homepage');
     expect(text).toContain('https://committee.example.gov');
     expect(text).toContain('https://leg.example.gov/committee-roster');
@@ -263,7 +263,7 @@ describe('searchCommittees — link rendering with an empty note', () => {
       ],
       pagination,
     });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('**Links:** https://committee.example.gov');
     expect(text).not.toContain(': https://committee.example.gov');
   });
@@ -278,7 +278,7 @@ describe('searchCommittees — link rendering with an empty note', () => {
       ],
       pagination,
     });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('**Links:** homepage: https://committee.example.gov');
   });
 });
@@ -307,7 +307,9 @@ describe('searchCommittees — out-of-range page', () => {
     const ctx = createMockContext({ errors: searchCommittees.errors });
     const input = searchCommittees.input.parse({ jurisdiction: 'wa', page: 99 });
 
-    const err = await searchCommittees.handler(input, ctx).catch((e: unknown) => e);
+    const err = await Promise.resolve(searchCommittees.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect((err as McpError).data).toMatchObject({
       reason: 'invalid_page',

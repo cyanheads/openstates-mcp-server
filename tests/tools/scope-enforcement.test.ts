@@ -91,14 +91,14 @@ const SCOPE_SUITES = [
     ],
     runScoped: async () => {
       // The real service reads `ctx.state` for its response cache, which needs a tenant.
-      const ctx = createMockContext({ tenantId: 'default' });
+      const ctx = createMockContext({ tenantId: 'default', errors: searchBills.errors });
       await searchBills.handler(searchBills.input.parse({ jurisdiction: 'wa' }), ctx);
     },
     run: async (input: unknown) => {
       const parsed = searchBills.input.safeParse(input);
       if (!parsed.success) return false;
       const ctx = createMockContext({ tenantId: 'default', errors: searchBills.errors });
-      await searchBills.handler(parsed.data, ctx).catch(() => undefined);
+      await Promise.resolve(searchBills.handler(parsed.data, ctx)).catch(() => undefined);
       return true;
     },
   },
@@ -122,14 +122,14 @@ const SCOPE_SUITES = [
       { include: ['offices'] },
     ],
     runScoped: async () => {
-      const ctx = createMockContext({ tenantId: 'default' });
+      const ctx = createMockContext({ tenantId: 'default', errors: searchPeople.errors });
       await searchPeople.handler(searchPeople.input.parse({ jurisdiction: 'wa' }), ctx);
     },
     run: async (input: unknown) => {
       const parsed = searchPeople.input.safeParse(input);
       if (!parsed.success) return false;
       const ctx = createMockContext({ tenantId: 'default', errors: searchPeople.errors });
-      await searchPeople.handler(parsed.data, ctx).catch(() => undefined);
+      await Promise.resolve(searchPeople.handler(parsed.data, ctx)).catch(() => undefined);
       return true;
     },
   },

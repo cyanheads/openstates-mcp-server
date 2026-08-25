@@ -31,7 +31,7 @@ describe('getJurisdiction', () => {
   });
 
   it('returns jurisdiction metadata by abbreviation', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getJurisdiction.errors });
     const input = getJurisdiction.input.parse({ jurisdiction_id: 'wa' });
     const result = await getJurisdiction.handler(input, ctx);
     expect(result.id).toBe('ocd-jurisdiction/country:us/state:wa/government');
@@ -56,14 +56,14 @@ describe('getJurisdiction', () => {
     };
     mockService.getJurisdiction.mockResolvedValue(withSessions);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getJurisdiction.errors });
     const input = getJurisdiction.input.parse({
       jurisdiction_id: 'wa',
       include: ['legislative_sessions'],
     });
     const result = await getJurisdiction.handler(input, ctx);
     expect(result.legislative_sessions).toBeDefined();
-    expect(result.legislative_sessions?.[0].identifier).toBe('2025');
+    expect(result.legislative_sessions?.[0]?.identifier).toBe('2025');
   });
 
   it('propagates not_found error from service', async () => {
@@ -83,8 +83,8 @@ describe('getJurisdiction', () => {
       latest_people_update: '2025-05-19T08:00:00Z',
     };
     const blocks = getJurisdiction.format!(result);
-    expect(blocks[0].type).toBe('text');
-    const text = (blocks[0] as { text: string }).text;
+    expect(blocks[0]!.type).toBe('text');
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Washington');
     expect(text).toContain('ocd-jurisdiction/country:us/state:wa/government');
     expect(text).toContain('https://leg.wa.gov');
@@ -111,7 +111,7 @@ describe('getJurisdiction', () => {
       ],
     };
     const blocks = getJurisdiction.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('`2025`');
     expect(text).toContain('2025 Regular Session');
   });
@@ -147,7 +147,7 @@ describe('getJurisdiction — include enrichment surfacing (organizations, lates
 
   it('carries organizations and latest_runs through the handler rebuild and output schema', async () => {
     mockService.getJurisdiction.mockResolvedValue(enrichedJurisdiction);
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getJurisdiction.errors });
     const input = getJurisdiction.input.parse({
       jurisdiction_id: 'wa',
       include: ['organizations', 'latest_runs'],
@@ -165,7 +165,7 @@ describe('getJurisdiction — include enrichment surfacing (organizations, lates
   /** content[] path — format() rendered neither pre-fix. */
   it('renders organizations and latest_runs in format() text', () => {
     const blocks = getJurisdiction.format!(enrichedJurisdiction);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Washington State House');
     expect(text).toContain('lower');
     expect(text).toContain('ocd-organization/house');
@@ -198,7 +198,7 @@ describe('getJurisdiction — sessions with an empty classification or date (iss
       ...mockJurisdiction,
       legislative_sessions: [session],
     });
-    return (blocks[0] as { text: string }).text;
+    return (blocks[0]! as { text: string }).text;
   };
 
   const session = {

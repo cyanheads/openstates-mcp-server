@@ -13,6 +13,7 @@ export const jurisdictionResource = resource('openstates://jurisdiction/{jurisdi
   description:
     'Jurisdiction metadata including current sessions, coverage dates, and bill/people update timestamps. Use as stable reference context before querying bills or people — inject this to prime session identifiers without a tool call.',
   mimeType: 'application/json',
+  cacheHint: { ttlMs: 43_200_000, cacheScope: 'public' },
   params: z.object({
     jurisdiction_id: z
       .string()

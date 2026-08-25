@@ -27,6 +27,13 @@ import { initOpenStatesApiService } from './services/openstates/openstates-servi
 await createApp({
   name: 'openstates-mcp-server',
   title: 'openstates-mcp-server',
+  cacheHints: {
+    'tools/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'prompts/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'resources/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'resources/templates/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'server/discover': { ttlMs: 3_600_000, cacheScope: 'public' },
+  },
   tools: [
     searchBills,
     getBill,

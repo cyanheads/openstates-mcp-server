@@ -47,7 +47,7 @@ describe('getBill', () => {
   });
 
   it('fetches bill by openstates_id', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getBill.errors });
     const input = getBill.input.parse({ openstates_id: 'ocd-bill/12345' });
     const result = await getBill.handler(input, ctx);
     expect(result.id).toBe('ocd-bill/12345');
@@ -56,7 +56,7 @@ describe('getBill', () => {
   });
 
   it('fetches bill by path (jurisdiction + session + bill_id)', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getBill.errors });
     const input = getBill.input.parse({
       jurisdiction: 'wa',
       session: '2025',
@@ -103,17 +103,17 @@ describe('getBill', () => {
     };
     mockService.getBillById.mockResolvedValue(billWithVotes);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getBill.errors });
     const input = getBill.input.parse({ openstates_id: 'ocd-bill/12345', include: ['votes'] });
     const result = await getBill.handler(input, ctx);
     expect(result.votes).toBeDefined();
-    expect(result.votes?.[0].result).toBe('pass');
+    expect(result.votes?.[0]?.result).toBe('pass');
   });
 
   it('formats output with id, identifier, jurisdiction, and url', () => {
     const blocks = getBill.format!(mockBill);
-    expect(blocks[0].type).toBe('text');
-    const text = (blocks[0] as { text: string }).text;
+    expect(blocks[0]!.type).toBe('text');
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('HB 1000');
     expect(text).toContain('ocd-bill/12345');
     expect(text).toContain('Washington');
@@ -136,7 +136,7 @@ describe('getBill', () => {
       ],
     };
     const blocks = getBill.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Jane Smith');
     expect(text).toContain('ocd-person/abc');
   });
@@ -160,7 +160,7 @@ describe('getBill', () => {
       ],
     };
     const blocks = getBill.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('vote-1');
     expect(text).toContain('Passage of HB 1000');
     expect(text).toContain('yes: 75');
@@ -177,19 +177,19 @@ describe('getBill', () => {
 
     it('keeps updated_at in structuredContent', async () => {
       mockService.getBillById.mockResolvedValue(billWithTimestamp);
-      const ctx = createMockContext();
+      const ctx = createMockContext({ errors: getBill.errors });
       const input = getBill.input.parse({ openstates_id: 'ocd-bill/12345' });
       const structured = getBill.output.parse(await getBill.handler(input, ctx));
       expect(structured.updated_at).toBe('2026-07-15T12:02:32Z');
     });
 
     it('renders updated_at in format()', () => {
-      const text = (getBill.format!(billWithTimestamp)[0] as { text: string }).text;
+      const text = (getBill.format!(billWithTimestamp)[0]! as { text: string }).text;
       expect(text).toContain('2026-07-15T12:02:32Z');
     });
 
     it('omits the line entirely when upstream sends no timestamp', () => {
-      const text = (getBill.format!(mockBill)[0] as { text: string }).text;
+      const text = (getBill.format!(mockBill)[0]! as { text: string }).text;
       expect(text).not.toContain('**Updated:**');
     });
   });
@@ -210,7 +210,7 @@ describe('getBill', () => {
       latest_passage_date: null,
     };
     const blocks = getBill.format!(sparseBill);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('ocd-bill/sparse');
     expect(text).toContain('SB 1');
   });

@@ -36,12 +36,12 @@ describe('listJurisdictions', () => {
   });
 
   it('returns jurisdictions with default state classification', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
     const input = listJurisdictions.input.parse({});
     const result = await listJurisdictions.handler(input, ctx);
     expect(result.results).toHaveLength(1);
-    expect(result.results[0].id).toBe('ocd-jurisdiction/country:us/state:wa/government');
-    expect(result.results[0].name).toBe('Washington');
+    expect(result.results[0]!.id).toBe('ocd-jurisdiction/country:us/state:wa/government');
+    expect(result.results[0]!.name).toBe('Washington');
     expect(result.pagination.total_items).toBe(1);
     const enrichment = getEnrichment(ctx);
     expect(enrichment.totalCount).toBe(1);
@@ -50,12 +50,12 @@ describe('listJurisdictions', () => {
   });
 
   it('passes include param when provided', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: listJurisdictions.errors });
     const withSessions = {
       ...mockJurisdictionResult,
       results: [
         {
-          ...mockJurisdictionResult.results[0],
+          ...mockJurisdictionResult.results[0]!,
           legislative_sessions: [
             {
               identifier: '2025',
@@ -72,8 +72,8 @@ describe('listJurisdictions', () => {
 
     const input = listJurisdictions.input.parse({ include: ['legislative_sessions'] });
     const result = await listJurisdictions.handler(input, ctx);
-    expect(result.results[0].legislative_sessions).toBeDefined();
-    expect(result.results[0].legislative_sessions?.[0].identifier).toBe('2025');
+    expect(result.results[0]!.legislative_sessions).toBeDefined();
+    expect(result.results[0]!.legislative_sessions?.[0]?.identifier).toBe('2025');
   });
 
   it('formats output with jurisdiction id, name, and url', () => {
@@ -81,9 +81,9 @@ describe('listJurisdictions', () => {
       results: mockJurisdictionResult.results,
       pagination: mockJurisdictionResult.pagination,
     };
-    const blocks = listJurisdictions.format!(result);
-    expect(blocks[0].type).toBe('text');
-    const text = (blocks[0] as { text: string }).text;
+    const blocks = listJurisdictions.format!(listJurisdictions.output.parse(result));
+    expect(blocks[0]!.type).toBe('text');
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Washington');
     expect(text).toContain('ocd-jurisdiction/country:us/state:wa/government');
     expect(text).toContain('https://leg.wa.gov');
@@ -94,7 +94,7 @@ describe('listJurisdictions', () => {
     const result = {
       results: [
         {
-          ...mockJurisdictionResult.results[0],
+          ...mockJurisdictionResult.results[0]!,
           legislative_sessions: [
             {
               identifier: '2025',
@@ -109,7 +109,7 @@ describe('listJurisdictions', () => {
       pagination: mockJurisdictionResult.pagination,
     };
     const blocks = listJurisdictions.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('2025');
     expect(text).toContain('2025 Regular Session');
   });

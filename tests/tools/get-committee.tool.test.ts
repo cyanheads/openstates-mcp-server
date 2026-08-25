@@ -29,7 +29,7 @@ describe('getCommittee', () => {
   });
 
   it('returns committee by id', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getCommittee.errors });
     const input = getCommittee.input.parse({ committee_id: 'ocd-organization/comm-1' });
     const result = await getCommittee.handler(input, ctx);
     expect(result.id).toBe('ocd-organization/comm-1');
@@ -47,7 +47,7 @@ describe('getCommittee', () => {
     };
     mockService.getCommittee.mockResolvedValue(committeeWithMembers);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getCommittee.errors });
     const input = getCommittee.input.parse({
       committee_id: 'ocd-organization/comm-1',
       include: ['memberships'],
@@ -55,7 +55,7 @@ describe('getCommittee', () => {
     const result = await getCommittee.handler(input, ctx);
     expect(result.memberships).toBeDefined();
     expect(result.memberships).toHaveLength(2);
-    expect(result.memberships?.[0].role).toBe('chair');
+    expect(result.memberships?.[0]?.role).toBe('chair');
   });
 
   it('propagates not_found error from service', async () => {
@@ -73,8 +73,8 @@ describe('getCommittee', () => {
       parent_id: null,
     };
     const blocks = getCommittee.format!(result);
-    expect(blocks[0].type).toBe('text');
-    const text = (blocks[0] as { text: string }).text;
+    expect(blocks[0]!.type).toBe('text');
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Committee on Transportation');
     expect(text).toContain('ocd-organization/comm-1');
     expect(text).toContain('committee');
@@ -88,7 +88,7 @@ describe('getCommittee', () => {
       parent_id: 'ocd-organization/comm-1',
     };
     const blocks = getCommittee.format!(subcommittee);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('ocd-organization/comm-1');
   });
 
@@ -101,7 +101,7 @@ describe('getCommittee', () => {
       memberships: [{ person_id: 'ocd-person/abc', person_name: 'Jane Smith', role: 'chair' }],
     };
     const blocks = getCommittee.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Jane Smith');
     expect(text).toContain('chair');
     expect(text).toContain('ocd-person/abc');
@@ -129,7 +129,7 @@ describe('getCommittee — include enrichment surfacing (links, sources)', () =>
     const mockService = { getCommittee: vi.fn().mockResolvedValue(enrichedCommittee) };
     vi.mocked(getOpenStatesApiService).mockReturnValue(mockService as never);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getCommittee.errors });
     const input = getCommittee.input.parse({
       committee_id: 'ocd-organization/comm-1',
       include: ['links', 'sources'],
@@ -146,7 +146,7 @@ describe('getCommittee — include enrichment surfacing (links, sources)', () =>
   /** content[] path. format() rendered neither pre-fix. */
   it('renders links and sources in format() text', () => {
     const blocks = getCommittee.format!(enrichedCommittee);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('homepage');
     expect(text).toContain('https://committee.example.gov');
     expect(text).toContain('https://leg.example.gov/committee-roster');
@@ -164,7 +164,7 @@ describe('getCommittee — link rendering with an empty note', () => {
       ...mockCommittee,
       links: [{ url: 'https://committee.example.gov', note: '' }],
     });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('- https://committee.example.gov');
     expect(text).not.toContain(': https://committee.example.gov');
   });
@@ -174,7 +174,7 @@ describe('getCommittee — link rendering with an empty note', () => {
       ...mockCommittee,
       links: [{ url: 'https://committee.example.gov', note: 'homepage' }],
     });
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('- homepage: https://committee.example.gov');
   });
 });

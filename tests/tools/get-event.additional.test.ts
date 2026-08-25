@@ -67,7 +67,7 @@ describe('getEvent — handler passes include to service', () => {
   });
 
   it('passes include=links,media,documents to service', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({
       event_id: 'ocd-event/evt-1',
       include: ['links', 'media', 'documents'],
@@ -81,7 +81,7 @@ describe('getEvent — handler passes include to service', () => {
   });
 
   it('passes undefined include to service when include is empty array', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: [] });
     await getEvent.handler(input, ctx);
     expect(mockService.getEvent).toHaveBeenCalledWith(
@@ -106,7 +106,7 @@ describe('getEvent — handler result shape', () => {
       ...baseEvent,
       location: { name: "John L. O'Brien Building", url: 'https://leg.wa.gov/rooms' },
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1' });
     const result = await getEvent.handler(input, ctx);
     expect(result.location).toBeDefined();
@@ -116,7 +116,7 @@ describe('getEvent — handler result shape', () => {
 
   it('omits location from result when service omits it', async () => {
     mockService.getEvent.mockResolvedValue({ ...baseEvent });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1' });
     const result = await getEvent.handler(input, ctx);
     expect(result.location).toBeUndefined();
@@ -127,11 +127,11 @@ describe('getEvent — handler result shape', () => {
       ...baseEvent,
       links: [{ note: 'Agenda PDF', url: 'https://leg.wa.gov/agenda.pdf' }],
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: ['links'] });
     const result = await getEvent.handler(input, ctx);
     expect(result.links).toBeDefined();
-    expect(result.links?.[0].url).toBe('https://leg.wa.gov/agenda.pdf');
+    expect(result.links?.[0]?.url).toBe('https://leg.wa.gov/agenda.pdf');
   });
 
   it('includes media when service returns it', async () => {
@@ -139,11 +139,11 @@ describe('getEvent — handler result shape', () => {
       ...baseEvent,
       media: [{ note: 'Video recording', url: 'https://tvw.org/video/12345' }],
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: ['media'] });
     const result = await getEvent.handler(input, ctx);
     expect(result.media).toBeDefined();
-    expect(result.media?.[0].url).toBe('https://tvw.org/video/12345');
+    expect(result.media?.[0]?.url).toBe('https://tvw.org/video/12345');
   });
 
   it('includes documents when service returns them', async () => {
@@ -151,11 +151,11 @@ describe('getEvent — handler result shape', () => {
       ...baseEvent,
       documents: [{ note: 'Fiscal note', url: 'https://leg.wa.gov/fiscal.pdf' }],
     });
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: ['documents'] });
     const result = await getEvent.handler(input, ctx);
     expect(result.documents).toBeDefined();
-    expect(result.documents?.[0].note).toBe('Fiscal note');
+    expect(result.documents?.[0]?.note).toBe('Fiscal note');
   });
 });
 
@@ -166,7 +166,7 @@ describe('getEvent — format', () => {
       location: { name: 'Committee Room A', url: 'https://leg.wa.gov/room-a' },
     };
     const blocks = getEvent.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Committee Room A');
     expect(text).toContain('https://leg.wa.gov/room-a');
     expect(text).toContain('Location:');
@@ -178,7 +178,7 @@ describe('getEvent — format', () => {
       location: { name: 'Committee Room B' },
     };
     const blocks = getEvent.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Committee Room B');
     expect(text).toContain('Location:');
     // No stray undefined in output
@@ -191,7 +191,7 @@ describe('getEvent — format', () => {
       links: [{ note: 'Agenda', url: 'https://leg.wa.gov/agenda.pdf' }],
     };
     const blocks = getEvent.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Links');
     expect(text).toContain('Agenda');
     expect(text).toContain('https://leg.wa.gov/agenda.pdf');
@@ -203,7 +203,7 @@ describe('getEvent — format', () => {
       media: [{ note: 'Video', url: 'https://tvw.org/video/99' }],
     };
     const blocks = getEvent.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Media');
     expect(text).toContain('Video');
     expect(text).toContain('https://tvw.org/video/99');
@@ -215,7 +215,7 @@ describe('getEvent — format', () => {
       documents: [{ note: 'Fiscal Note', url: 'https://leg.wa.gov/fiscal.pdf' }],
     };
     const blocks = getEvent.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Documents');
     expect(text).toContain('Fiscal Note');
     expect(text).toContain('https://leg.wa.gov/fiscal.pdf');
@@ -227,14 +227,14 @@ describe('getEvent — format', () => {
       end_date: undefined,
     };
     const blocks = getEvent.format!(result);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Start:');
     expect(text).not.toContain('End:');
   });
 
   it('formats start and end date when both present', () => {
     const blocks = getEvent.format!(baseEvent);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Start:');
     expect(text).toContain('End:');
     expect(text).toContain('2025-03-15T09:00:00');
@@ -269,7 +269,7 @@ describe('getEvent — sources include surfacing (issue #18)', () => {
 
   it('carries sources through the handler rebuild and output schema', async () => {
     mockService.getEvent.mockResolvedValue(enrichedEvent);
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: ['sources'] });
     const handlerResult = await getEvent.handler(input, ctx);
     const event = getEvent.output.parse(handlerResult);
@@ -280,7 +280,7 @@ describe('getEvent — sources include surfacing (issue #18)', () => {
 
   it('renders sources in format() text', () => {
     const blocks = getEvent.format!(enrichedEvent);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Sources');
     expect(text).toContain('https://leg.ca.gov/event-source');
     expect(text).toContain('official calendar');
@@ -313,18 +313,18 @@ describe('getEvent — participant without upstream role (issue #19)', () => {
 
   it('accepts a role-less participant through the handler and output schema', async () => {
     mockService.getEvent.mockResolvedValue(eventRolelessParticipant);
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: ['participants'] });
     const handlerResult = await getEvent.handler(input, ctx);
     const event = getEvent.output.parse(handlerResult);
     expect(event.participants).toHaveLength(2);
-    expect(event.participants?.[0].role).toBe('host');
-    expect(event.participants?.[1].role).toBeUndefined();
+    expect(event.participants?.[0]?.role).toBe('host');
+    expect(event.participants?.[1]?.role).toBeUndefined();
   });
 
   it('renders a role-less participant without printing "undefined"', () => {
     const blocks = getEvent.format!(eventRolelessParticipant);
-    const text = (blocks[0] as { text: string }).text;
+    const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('Jane Doe');
     expect(text).not.toContain('undefined');
   });
@@ -337,7 +337,7 @@ describe('getEvent — participant without upstream role (issue #19)', () => {
  */
 describe('getEvent — link, media, and document rendering with an empty note', () => {
   const render = (event: Record<string, unknown>) =>
-    (getEvent.format!({ ...baseEvent, ...event })[0] as { text: string }).text;
+    (getEvent.format!({ ...baseEvent, ...event })[0]! as { text: string }).text;
 
   it('renders each URL alone when the note is empty', () => {
     const text = render({
