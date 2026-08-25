@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.1](changelog/0.3.x/0.3.1.md) — 2026-08-24
+
+Adopts MCP SDK v2 with modern protocol support, strict tool inputs, public cache hints, and an explicit stateless HTTP configuration.
+
 ## [0.3.0](changelog/0.3.x/0.3.0.md) — 2026-07-31 · ⚠️ Breaking
 
 openstates_search_bills drops its typed missing_scope error for a schema-refinement rejection, matching openstates_search_people — empty-string jurisdiction/q now reject identically on both tools.
