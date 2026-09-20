@@ -1268,6 +1268,13 @@ describe('fetchJson — upstream rejection detail', () => {
     vi.unstubAllGlobals();
   });
 
+  /** An empty, well-formed `/bills` page. A fresh Response per call — bodies are single-use. */
+  const okBillsPage = () =>
+    jsonResponse(200, {
+      results: [],
+      pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
+    });
+
   /**
    * Paging one past `max_page` is ordinary agent behaviour — `page` is an input on every search
    * tool and `max_page` rides every response. Upstream answers with a 404 whose body names the
@@ -1346,16 +1353,47 @@ describe('fetchJson — upstream rejection detail', () => {
     expect((err as McpError).message).not.toContain('Open States rejected the request');
   });
 
+  /**
+   * A 5xx body is a gateway error page with no constraint to name, so the detail rewrite is
+   * scoped to 4xx and the transport's own message survives.
+   *
+   * Driven with a 501 rather than a 500: the whole 5xx range classifies `ServiceUnavailable`, a
+   * transient code, and 501 is the one status the transport additionally stamps
+   * `retryable: false` — so this reaches the assertion in one attempt instead of spending the
+   * exponential backoff of a full ladder on the clock.
+   */
   it('leaves a 5xx alone even when its body carries a detail field', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse(500, { detail: 'internal server error' }))),
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(jsonResponse(501, { detail: 'not implemented' })),
     );
+    vi.stubGlobal('fetch', fetchMock);
     const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
 
     const err = await svc.searchBills({ q: 'x', page: 1, per_page: 10 }, ctx).catch((e) => e);
 
+    expect((err as McpError).code).toBe(JsonRpcErrorCode.ServiceUnavailable);
     expect((err as McpError).message).not.toContain('Open States rejected the request');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A 500 is a transient upstream fault, not a deterministic one: it classifies
+   * `ServiceUnavailable` with the rest of the 5xx range and keeps its retries, unlike the two
+   * signals (429, 504) the service re-stamps non-retryable. One retry proves it; exhausting all
+   * four would spend the full exponential backoff on the clock.
+   */
+  it('retries a 500 and succeeds when the retry lands', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(500, { detail: 'internal server error' }))
+      .mockResolvedValueOnce(okBillsPage());
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+
+    const res = await svc.searchBills({ q: 'x', page: 1, per_page: 10 }, ctx);
+
+    expect(res.pagination.total_items).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   /**
@@ -1659,5 +1697,51 @@ describe('per-attempt request timeout — configured value reaches the service',
 
     expect((err as McpError).message).toContain('within 0.6s');
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(500);
+  });
+});
+
+// --------------------------------------------------------------------------
+// init/accessor/shutdown — the module singleton's lifecycle. Each case resets
+// the module registry so it observes the singleton from its unset state, which
+// the suites above leave populated.
+// --------------------------------------------------------------------------
+
+describe('OpenStatesApiService singleton lifecycle', () => {
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  /** A fresh copy of the service module, with its singleton unset. */
+  async function freshModule() {
+    vi.resetModules();
+    return import('@/services/openstates/openstates-service.js');
+  }
+
+  it('refuses the accessor before init rather than handing back a half-built client', async () => {
+    const mod = await freshModule();
+
+    expect(() => mod.getOpenStatesApiService()).toThrow('not initialized');
+  });
+
+  /**
+   * `createApp({ teardown })` calls this while the logger and core services are still up. It
+   * releases the rate limiter's sweep timer and clears the singleton, so a shutdown followed by a
+   * fresh `createApp` in the same process starts from an unset accessor rather than a client
+   * bound to the previous run's config.
+   */
+  it('releases the singleton on shutdown, so the accessor refuses again', async () => {
+    const mod = await freshModule();
+    mod.initOpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    expect(mod.getOpenStatesApiService()).toBeInstanceOf(mod.OpenStatesApiService);
+
+    mod.shutdownOpenStatesApiService();
+
+    expect(() => mod.getOpenStatesApiService()).toThrow('not initialized');
+  });
+
+  it('is safe to call when nothing was ever initialized', async () => {
+    const mod = await freshModule();
+
+    expect(() => mod.shutdownOpenStatesApiService()).not.toThrow();
   });
 });

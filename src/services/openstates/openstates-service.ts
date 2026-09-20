@@ -865,6 +865,11 @@ export class OpenStatesApiService {
     ctx.log.debug('Fetching jurisdiction', { jurisdictionId });
     return this.fetchJson<Jurisdiction>(url, ctx);
   }
+
+  /** Releases the budget limiter's sweep timer. The counterpart to the constructor. */
+  dispose(): void {
+    this.rateLimiter.dispose();
+  }
 }
 
 // --- Init/accessor pattern ---
@@ -886,4 +891,16 @@ export function getOpenStatesApiService(): OpenStatesApiService {
     );
   }
   return _service;
+}
+
+/**
+ * Counterpart to `initOpenStatesApiService`, wired to `createApp({ teardown })`. Releases the
+ * budget limiter's sweep timer and clears the singleton, so a shutdown followed by a fresh
+ * `createApp` in the same process rebuilds the client from the new config rather than reusing a
+ * client bound to the previous run's. Idempotent — a second call, or one before any init, is a
+ * no-op.
+ */
+export function shutdownOpenStatesApiService(): void {
+  _service?.dispose();
+  _service = undefined;
 }

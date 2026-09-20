@@ -22,11 +22,22 @@ import { searchBills } from './mcp-server/tools/definitions/search-bills.tool.js
 import { searchCommittees } from './mcp-server/tools/definitions/search-committees.tool.js';
 import { searchEvents } from './mcp-server/tools/definitions/search-events.tool.js';
 import { searchPeople } from './mcp-server/tools/definitions/search-people.tool.js';
-import { initOpenStatesApiService } from './services/openstates/openstates-service.js';
+import {
+  initOpenStatesApiService,
+  shutdownOpenStatesApiService,
+} from './services/openstates/openstates-service.js';
 
 await createApp({
   name: 'openstates-mcp-server',
   title: 'openstates-mcp-server',
+  /**
+   * Every tool here is a read-through to the Open States API — none suspends on
+   * `ctx.requestInput`, so nothing needs a session to resume into. Declaring the posture in
+   * source rather than leaving it to the schema default (`auto`, which resolves to stateful)
+   * keeps a deployment that never sets `MCP_SESSION_MODE` from standing up a session store it
+   * has no use for. `MCP_SESSION_MODE` still overrides when it carries a meaningful value.
+   */
+  sessionMode: 'stateless',
   cacheHints: {
     'tools/list': { ttlMs: 3_600_000, cacheScope: 'public' },
     'prompts/list': { ttlMs: 3_600_000, cacheScope: 'public' },
@@ -61,5 +72,8 @@ await createApp({
   setup(core) {
     const serverConfig = getServerConfig();
     initOpenStatesApiService(core.config, core.storage, serverConfig);
+  },
+  teardown() {
+    shutdownOpenStatesApiService();
   },
 });
