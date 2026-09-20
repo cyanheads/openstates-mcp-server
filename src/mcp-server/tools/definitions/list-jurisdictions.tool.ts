@@ -151,6 +151,9 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
       when: 'Open States did not answer within the per-request timeout.',
       recovery:
         'Retry once; if it repeats, drop the include values and keep classification="state", which is the smallest inventory request.',
+      // Raised by the service's `classifyUpstreamFailure`, which owns both timeout clocks — the
+      // handler never sees the expiry it would need to throw on.
+      thrownBy: 'service',
     },
     {
       reason: 'invalid_page',

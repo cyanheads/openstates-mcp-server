@@ -118,6 +118,9 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
       when: 'Open States did not answer within the per-request timeout.',
       recovery:
         'Retry the lookup once; if it repeats, request fewer include values — legislative_sessions and latest_runs each enlarge the upstream response.',
+      // Raised by the service's `classifyUpstreamFailure`, which owns both timeout clocks — the
+      // handler never sees the expiry it would need to throw on.
+      thrownBy: 'service',
     },
   ],
 

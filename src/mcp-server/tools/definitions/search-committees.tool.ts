@@ -162,6 +162,9 @@ export const searchCommittees = tool('openstates_search_committees', {
       when: 'Open States did not answer within the per-request timeout — the query is too broad.',
       recovery:
         'Narrow the request: keep the jurisdiction, add chamber or classification, and drop any include values you do not need.',
+      // Raised by the service's `classifyUpstreamFailure`, which owns both timeout clocks — the
+      // handler never sees the expiry it would need to throw on.
+      thrownBy: 'service',
     },
     {
       reason: 'invalid_page',

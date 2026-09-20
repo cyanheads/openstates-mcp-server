@@ -247,6 +247,9 @@ export const searchEvents = tool('openstates_search_events', {
       when: 'Open States did not answer within the per-request timeout — the query is too broad.',
       recovery:
         'Narrow the search: bound it with after and before, set require_bills=true, and drop any include values you do not need.',
+      // Raised by the service's `classifyUpstreamFailure`, which owns both timeout clocks — the
+      // handler never sees the expiry it would need to throw on.
+      thrownBy: 'service',
     },
     {
       reason: 'invalid_page',

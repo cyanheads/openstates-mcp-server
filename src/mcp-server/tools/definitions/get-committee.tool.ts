@@ -99,6 +99,9 @@ export const getCommittee = tool('openstates_get_committee', {
       when: 'Open States did not answer within the per-request timeout.',
       recovery:
         'Retry the lookup once; if it repeats, request fewer include values — memberships is the one that enlarges the upstream response.',
+      // Raised by the service's `classifyUpstreamFailure`, which owns both timeout clocks — the
+      // handler never sees the expiry it would need to throw on.
+      thrownBy: 'service',
     },
   ],
 

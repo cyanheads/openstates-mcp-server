@@ -161,6 +161,9 @@ export const getEvent = tool('openstates_get_event', {
       when: 'Open States did not answer within the per-request timeout.',
       recovery:
         'Retry the lookup once; if it repeats, request fewer include values — agenda and participants each enlarge the upstream response.',
+      // Raised by the service's `classifyUpstreamFailure`, which owns both timeout clocks — the
+      // handler never sees the expiry it would need to throw on.
+      thrownBy: 'service',
     },
   ],
 

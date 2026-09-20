@@ -219,6 +219,9 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
       when: 'Open States did not answer within the per-request timeout.',
       recovery:
         'Retry the lookup once; if it repeats, request fewer include values so the district lookup returns a smaller payload.',
+      // Raised by the service's `classifyUpstreamFailure`, which owns both timeout clocks — the
+      // handler never sees the expiry it would need to throw on.
+      thrownBy: 'service',
     },
   ],
 

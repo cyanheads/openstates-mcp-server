@@ -480,6 +480,9 @@ export const searchBills = tool('openstates_search_bills', {
       when: 'Open States did not answer within the per-request timeout — the query is too broad.',
       recovery:
         'Narrow the search: add a jurisdiction, a session, or an action_since/updated_since date filter, or use a more distinctive q term.',
+      // Raised by the service's `classifyUpstreamFailure`, which owns both timeout clocks — the
+      // handler never sees the expiry it would need to throw on.
+      thrownBy: 'service',
     },
     {
       reason: 'invalid_page',

@@ -35,6 +35,9 @@ export const jurisdictionResource = resource('openstates://jurisdiction/{jurisdi
       when: 'Open States did not answer within the per-request timeout.',
       recovery:
         'Retry the read once; if it repeats, call openstates_get_jurisdiction without include=legislative_sessions for the smaller record.',
+      // Raised by the service's `classifyUpstreamFailure`, which owns both timeout clocks — the
+      // handler never sees the expiry it would need to throw on.
+      thrownBy: 'service',
     },
   ],
 

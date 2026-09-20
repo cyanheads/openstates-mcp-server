@@ -248,6 +248,9 @@ export const searchPeople = tool('openstates_search_people', {
       when: 'Open States did not answer within the per-request timeout — the query is too broad.',
       recovery:
         'Narrow the search: keep the jurisdiction, add org_classification or district, and drop any include values you do not need.',
+      // Raised by the service's `classifyUpstreamFailure`, which owns both timeout clocks — the
+      // handler never sees the expiry it would need to throw on.
+      thrownBy: 'service',
     },
     {
       reason: 'invalid_page',
