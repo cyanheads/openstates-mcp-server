@@ -3,8 +3,8 @@
     "command": "npx",
     "args": ["-y", "@cyanheads/openstates-mcp-server"],
     "env": {
-      "MCP_TRANSPORT_TYPE": "stdio",
-      "OPENSTATES_API_KEY": ""
-    }
+      "MCP_TRANSPORT_TYPE": "stdio"
+    },
+    "env_vars": ["OPENSTATES_API_KEY"]
   }
 }

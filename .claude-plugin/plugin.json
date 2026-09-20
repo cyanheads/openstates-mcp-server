@@ -1,20 +1,42 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "openstates-mcp-server",
   "version": "0.3.1",
   "description": "Search bills, legislators, committees, and events across all 50 US states, DC, and 5 US territories via MCP. STDIO or Streamable HTTP.",
   "author": {
-    "name": "cyanheads"
+    "name": "cyanheads",
+    "email": "casey@caseyjhand.com",
+    "url": "https://caseyjhand.com"
   },
   "homepage": "https://github.com/cyanheads/openstates-mcp-server#readme",
   "repository": "https://github.com/cyanheads/openstates-mcp-server",
   "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "legislation",
+    "openstates",
+    "state-legislature",
+    "bills",
+    "legislators"
+  ],
+  "userConfig": {
+    "OPENSTATES_API_KEY": {
+      "type": "string",
+      "title": "Open States API key",
+      "description": "Required. API key from open.pluralpolicy.com/accounts/profile.",
+      "sensitive": true,
+      "required": true
+    }
+  },
   "mcpServers": {
     "openstates-mcp-server": {
       "command": "npx",
       "args": ["-y", "@cyanheads/openstates-mcp-server"],
       "env": {
         "MCP_TRANSPORT_TYPE": "stdio",
-        "OPENSTATES_API_KEY": ""
+        "OPENSTATES_API_KEY": "${user_config.OPENSTATES_API_KEY}"
       }
     }
   }

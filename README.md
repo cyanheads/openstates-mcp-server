@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.3.1-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openstates-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/openstates-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openstates-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.3.1-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openstates-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/openstates-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openstates-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -23,9 +23,11 @@
 
 ---
 
-## Tools
+## Overview
 
-10 tools covering the full Open States v3 API surface — bills, legislators, committees, events, and jurisdictions:
+US state legislative data from the Open States v3 API — all 50 states, DC, and 5 US territories. Search and fetch bills, legislators, committees, events, and jurisdiction coverage metadata from any MCP client. Runs as a stdio process, a local Streamable HTTP server, or the public hosted endpoint above.
+
+### Tools
 
 | Tool | Description |
 |:---|:---|
@@ -40,112 +42,173 @@
 | `openstates_list_jurisdictions` | List all 56 jurisdictions (50 states, DC, and 5 US territories) covered by Open States with session identifiers and coverage metadata |
 | `openstates_get_jurisdiction` | Fetch full metadata for a specific jurisdiction including all legislative sessions and their identifiers |
 
-### `openstates_search_bills`
+### Resources
 
-Search state legislative bills with rich filtering and inline related data.
-
-- Full-text search across bill titles, abstracts, and text (`q`)
-- Either `jurisdiction` or `q` is required by the input schema — a call carrying neither fails schema validation, and pairing them is the reliable form, since a `q`-only search spans all 56 jurisdictions and times out upstream for a common term
-- Filter by jurisdiction (state name, two-letter abbreviation, or OCD-ID), session, chamber, classification, subject tags, and sponsor
-- Sort by latest action, first action, or update time — use `sort=latest_action_desc` for bills currently moving through the legislature
-- `include` parameter requests sponsorships, actions, votes, abstracts, versions, and related bills inline — eliminates follow-up `openstates_get_bill` calls for most research workflows
-- Sponsors carry linked person records (OCD person ID + name) when available, so a sponsor chains onward by ID rather than by name match
-- Every result carries `openstates_url` (citable page) and `updated_at` (the field the default `sort=updated_desc` orders by)
-- `action_since`, `updated_since`, and `created_since` date filters for change-tracking
-- Pagination up to 20 results per page
-- Empty-result recovery: `appliedFilters` echoes every filter the query was issued with and the notice names each one that narrowed it, so a zero-result answer identifies its own cause. A `jurisdiction` that matches no covered jurisdiction is called out by name — Open States answers an unrecognized one with zero bills rather than an error
-
----
-
-### `openstates_get_bill`
-
-Fetch complete bill detail by OCD ID or path lookup.
-
-- Two lookup modes: `openstates_id` (OCD bill ID from search results, preferred) or the three-part path `jurisdiction + session + bill_id`
-- Accepts bill identifiers in legislature format (e.g., `HB 1000`, `SB 42`)
-- `include=votes` returns full vote tallies and per-legislator positions
-- `include=versions,documents` provides links to bill text and fiscal notes
-- Sponsors carry linked person records (OCD person ID + name) when available
-
----
-
-### `openstates_search_people`
-
-Search legislators and officials within one jurisdiction by name, chamber, or district, or fetch specific people by OCD person ID.
-
-- Either `jurisdiction` or `id` is required by the input schema — a search spanning all 56 jurisdictions exceeds the upstream timeout, name-only searches included, so a call carrying neither fails schema validation. Use `openstates_list_jurisdictions` to pick a jurisdiction, or `openstates_get_legislators_by_location` when you have coordinates but no state
-- `id` takes OCD person IDs and returns exactly those people, so it needs no jurisdiction alongside it. It resolves the IDs that search results, `openstates_get_bill` sponsorships, and `openstates_get_committee` memberships hand back — several in one call, since upstream `/people` accepts `id` repeatedly and offers no per-person detail route
-- Case-insensitive substring matching on name
-- `org_classification` targets a role type: `upper` (Senate), `lower` (House/Assembly), `executive` (governors and executive officials), `legislature` (every legislator — both chambers merged into one paginated set, all upper members then all lower)
-- Omitting `org_classification` is not equivalent to `legislature` — it returns every officeholder, executive officials included
-- `include=offices` returns phone, fax, and mailing address
-- `include=links` returns website and social media links
-- Every result carries the member's official headshot URL (`image`) when published, and the OCD division their district maps to (`current_role.division_id`)
-
----
-
-### `openstates_get_legislators_by_location`
-
-Find every legislator representing a geographic coordinate, across both tiers of government.
-
-- Pass decimal-degree latitude/longitude to get the state senators and representatives for that location, plus its two US Senators and its US Representative
-- `jurisdiction.classification` separates the tiers: `"state"` is a state legislature, `"country"` is the US Congress. `current_role.org_classification` does not — it is `upper`/`lower` for a US Senator exactly as for a state senator
-- `stateCount` and `federalCount` report the split, and the rendered text labels each legislator's tier
-- Useful for constituent-to-representative matching, address-based policy research, and electoral boundary analysis
-- Does not geocode addresses — the caller must provide coordinates
-- Returns a coverage note when no legislators are found (e.g., coordinates outside US boundaries)
-
----
-
-### `openstates_list_jurisdictions` and `openstates_get_jurisdiction`
-
-Discover and look up jurisdiction coverage metadata.
-
-- `openstates_list_jurisdictions` returns all 56 jurisdictions (50 states, DC, and 5 US territories) in a single default call — the pages are merged server-side, since the upstream `per_page` ceiling of 52 no longer covers the full set
-- `include=legislative_sessions` returns all historical and current session identifiers — required before filtering bill searches by session, since formats vary widely by state (e.g., `2025`, `2025-2026`, `2025rs`, `2025s1`)
-- `openstates_get_jurisdiction` fetches one jurisdiction by OCD-ID, state name, or two-letter abbreviation
-
----
-
-### Committee and event tools (experimental)
-
-`openstates_search_committees`, `openstates_get_committee`, `openstates_search_events`, and `openstates_get_event` are experimental — Open States is actively working to restore committee support and most states do not publish event data. Empty results may indicate the state lacks data, not that no committees or events exist. The two search tools (`openstates_search_committees` and `openstates_search_events`) include a `coverageNote` field in their output documenting this limitation, and both require a `jurisdiction` in their input schema — a request spanning all 56 exceeds the upstream timeout, so a call that omits it fails schema validation.
-
-## Resources and prompts
-
-| Type | Name | Description |
-|:---|:---|:---|
-| Resource | `openstates://jurisdiction/{jurisdiction_id}` | Jurisdiction metadata including current sessions, coverage dates, and bill/people update timestamps |
-| Prompt | `openstates_bill_research` | Structured framework for analyzing a state bill: summary, sponsors, committee referrals, action timeline, vote record, and related legislation |
-| Prompt | `openstates_legislator_profile` | Research framework for profiling a legislator: sponsored bills, committee assignments, voting record, and contact details |
+| Resource | Description |
+|:---|:---|
+| `openstates://jurisdiction/{jurisdiction_id}` | Jurisdiction metadata including current sessions, coverage dates, and bill/people update timestamps |
 
 All resource data is also reachable via tools. Use `openstates_get_jurisdiction` for programmatic jurisdiction lookups; the resource is useful for injecting jurisdiction context as stable reference material.
 
+### Prompts
+
+| Prompt | Description |
+|:---|:---|
+| `openstates_bill_research` | Structured framework for analyzing a state bill: summary, sponsors, committee referrals, action timeline, vote record, and related legislation |
+| `openstates_legislator_profile` | Research framework for profiling a legislator: sponsored bills, committee assignments, voting record, and contact details |
+
+## Capability reference
+
+### `openstates_search_bills` <sub>tool</sub>
+
+- Either `jurisdiction` or `q` is required by the schema — a `q`-only search spans all 56 jurisdictions and exceeds the upstream timeout for a common term, so pairing them is the reliable form
+- Filters: `session`, `chamber` (`upper`/`lower`), `classification`, `subject` tags, `sponsor`, `sponsor_classification`, and `action_since`/`updated_since`/`created_since` ISO 8601 date filters
+- `include` inlines sponsorships, actions, votes, abstracts, versions, documents, and related bills — avoids follow-up `openstates_get_bill` calls
+- `sort` defaults to `updated_desc`; `sort=latest_action_desc` surfaces bills currently moving; pagination up to 20 per page (default 10)
+- Empty-result notice echoes every applied filter and names the jurisdiction by name when it isn't recognized
+
+---
+
+### `openstates_get_bill` <sub>tool</sub>
+
+- Lookup by `openstates_id` (preferred, from search results) or the three-part path `jurisdiction` + `session` + `bill_id`; a call missing both fails with `missing_lookup_params`
+- Accepts legislature-format bill identifiers (e.g., `HB 1000`, `SB 42`)
+- `include` inlines sponsorships, actions, votes, versions, documents, abstracts, other titles/identifiers, and related bills
+- `not_found` when the ID or path resolves to nothing
+
+---
+
+### `openstates_search_people` <sub>tool</sub>
+
+- Either `jurisdiction` or `id` (OCD person IDs) is required — an unscoped search exceeds the upstream timeout even for a name-only query
+- `id` resolves any number of specific OCD person IDs in one call — the IDs that bill sponsorships and committee memberships hand back — and needs no jurisdiction alongside it
+- `org_classification`: `upper`/`lower`/`executive`/`legislature` (both chambers merged, executive officials excluded); omitting it returns every officeholder including executives
+- Case-insensitive substring `name` match, plus `district`; `include` adds offices, links, other_names, other_identifiers, sources
+- Party is reported on every result but cannot be filtered on
+- Pagination up to 20 per page
+
+---
+
+### `openstates_get_legislators_by_location` <sub>tool</sub>
+
+- Pass decimal-degree `latitude`/`longitude`; does not geocode addresses
+- Returns both government tiers in one call: state legislators plus the coordinate's two US Senators and one US Representative
+- `jurisdiction.classification` (`state` vs `country`) is the tier discriminator — `current_role.org_classification` is not, since it's `upper`/`lower` for a US Senator exactly as for a state senator
+- `stateCount`/`federalCount` enrichment fields report the tier split
+- Out-of-range coordinates fail as `invalid_coordinate`; a location with no coverage returns an empty-result notice
+
+---
+
+### `openstates_search_committees` <sub>tool</sub>
+
+- `jurisdiction` is required — the schema rejects an all-states request
+- Filter by `classification` (`committee`/`subcommittee`) and `chamber`; `parent` scopes to one committee's subcommittees
+- `include=memberships` returns the full roster with member roles
+- Experimental: Open States is working to restore committee support and not all states have coverage — the output's `coverageNote` field always documents this
+- Pagination up to 20 per page
+
+---
+
+### `openstates_get_committee` <sub>tool</sub>
+
+- Fetch by OCD `committee_id` (from `openstates_search_committees`)
+- `include=memberships` returns the roster; `include=links`/`sources` add reference URLs
+- Experimental — not all states have committee data; `not_found` when the ID doesn't exist
+
+---
+
+### `openstates_search_events` <sub>tool</sub>
+
+- `jurisdiction` is required — the events endpoint has no all-states search
+- `after`/`before` scope to an ISO 8601 date range; `require_bills=true` filters to events with a bill on the agenda
+- `include=agenda,participants` returns full meeting context
+- Experimental: most states don't publish event data — an empty result may mean no coverage, not no events
+- Pagination up to 20 per page
+
+---
+
+### `openstates_get_event` <sub>tool</sub>
+
+- Fetch by OCD `event_id` (from `openstates_search_events`)
+- `include` adds agenda, participants, links, media, and documents
+- Experimental — event coverage is limited; `not_found` when the ID doesn't exist
+
+---
+
+### `openstates_list_jurisdictions` <sub>tool</sub>
+
+- Returns all 56 jurisdictions (50 states, DC, and 5 US territories) in one default call — pages are merged server-side, since the upstream `per_page` ceiling of 52 no longer covers the full set
+- `classification` filter defaults to `state`
+- `include=legislative_sessions` returns every historical and current session identifier — required before filtering bill searches by session, since formats vary by state (e.g., `2025`, `2025-2026`, `2025rs`, `2025s1`)
+- `include=organizations`/`latest_runs` add chamber/executive-body and scraper-run metadata
+
+---
+
+### `openstates_get_jurisdiction` <sub>tool</sub>
+
+- Fetch one jurisdiction by OCD-ID, state name, or two-letter abbreviation
+- `include=legislative_sessions` returns all session identifiers with date ranges
+- `not_found` when the identifier doesn't resolve
+
+---
+
+### `openstates://jurisdiction/{jurisdiction_id}` <sub>resource</sub>
+
+- `jurisdiction_id` accepts an OCD-ID, state name, or two-letter abbreviation
+- Returns jurisdiction metadata as `application/json`: current legislative sessions, coverage dates, bill/people update timestamps
+- Always includes `legislative_sessions` — use to prime session identifiers without a tool call
+- `not_found` when the identifier doesn't resolve
+
+---
+
+### `openstates_bill_research` <sub>prompt</sub>
+
+- Arguments: `jurisdiction`, `session`, `bill_id` — all required
+- Returns one user message directing a structured research brief: overview, sponsors, legislative history, vote record, related legislation, bill text, and a passage assessment
+
+---
+
+### `openstates_legislator_profile` <sub>prompt</sub>
+
+- Arguments: `name`, `jurisdiction` — both required
+- Returns one user message directing a structured profile: identity/role, sponsored legislation, committee assignments, voting record, and a summary
+
 ## Features
 
-Built on [`@cyanheads/mcp-ts-core`](https://www.npmjs.com/package/@cyanheads/mcp-ts-core):
-
-- Declarative tool, resource, and prompt definitions — single file per primitive, framework handles registration and validation
-- Unified error handling — handlers throw, framework catches, classifies, and formats
-- Pluggable auth: `none`, `jwt`, `oauth`
-- Swappable storage backends: `in-memory`, `filesystem`, `Supabase`, `Cloudflare KV/R2/D1`
-- Structured logging with optional OpenTelemetry tracing
-- STDIO and Streamable HTTP transports
+Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core): stdio and Streamable HTTP transports, pluggable auth (`none` / `jwt` / `oauth`), swappable storage (`in-memory`, `filesystem`, `Supabase`, `Cloudflare KV/R2/D1`), structured logging with optional OpenTelemetry tracing.
 
 Open States-specific:
 
 - Full Open States v3 API coverage: bills, people, committees, events, and jurisdictions
 - Dual lookup modes on bill and committee fetchers (OCD ID or structured path)
-- Geo-based legislator lookup via the Open States people-by-geo endpoint
-- Server-level instructions prime the agent with session discovery workflow and `include` parameter strategy before any tool calls
+- Geo-based legislator lookup via the Open States people-by-geo endpoint, spanning both state and federal tiers
+- Server-level instructions prime the agent with session-discovery workflow and `include` parameter strategy before any tool call
+- Per-key request budgeting (`OPENSTATES_DAILY_REQUEST_BUDGET`) and a two-tier timeout ladder guard the shared upstream key
 
 Agent-friendly output:
 
-- Empty-result recovery: tools echo the applied filters and suggest how to broaden when no results are returned
-- Experimental coverage notes on committee and event tools — agents can surface these to users rather than returning silent empty results
-- `include` parameter pattern across all search and get tools — avoids N+1 follow-up calls for common research workflows (e.g., `include=sponsorships,actions` on `openstates_search_bills`)
+- Empty-result recovery: search tools echo the applied filters and suggest how to broaden when no results are returned
+- Experimental coverage notes (`coverageNote`) on committee and event tools — surfaces the limitation instead of a silent empty result
+- `include` parameter pattern across all search and get tools — avoids N+1 follow-up calls for common research workflows
 
 ## Getting started
+
+### Public Hosted Instance
+
+A public instance is available at `https://openstates.caseyjhand.com/mcp` — no installation required. Point any MCP client at it via Streamable HTTP:
+
+```json
+{
+  "mcpServers": {
+    "openstates-mcp-server": {
+      "type": "streamable-http",
+      "url": "https://openstates.caseyjhand.com/mcp"
+    }
+  }
+}
+```
+
+### Self-Hosted / Local
 
 Requires an Open States API key — register free at [open.pluralpolicy.com](https://open.pluralpolicy.com/accounts/profile/).
 
@@ -215,7 +278,7 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 OPENSTATES_API_KEY=your-key bun run s
 
 ### Prerequisites
 
-- [Bun v1.3.0](https://bun.sh/) or higher (or Node.js v24+).
+- [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
 - An Open States API key — register free at [open.pluralpolicy.com](https://open.pluralpolicy.com/accounts/profile/).
 
 ### Installation
@@ -257,7 +320,7 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 | `OPENSTATES_REQUEST_TIMEOUT_MS` | Per-attempt upstream deadline in milliseconds (minimum `1000`). Expiry is non-retryable, so a request that cannot complete costs one wait rather than four. Open States answers a scoped query anywhere from under a second to ~57s and its own gateway gives up near 60s — lower this to fail sooner, raise it to wait out a slow query. | `45000` |
 | `OPENSTATES_TOTAL_REQUEST_BUDGET_MS` | Wall-clock ceiling in milliseconds for one call across every retry attempt and the backoff between them. The per-attempt deadline bounds a single request; this bounds the whole ladder, so a slow upstream that keeps failing retryably cannot hold a call open for the full retry sequence. Must be at least `OPENSTATES_REQUEST_TIMEOUT_MS` — startup rejects anything lower, which would abort every attempt before its own deadline applied. At the default of twice the deadline, an attempt that fails just short of its deadline still leaves a retry nearly a full deadline of its own. | `90000` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`. | `stdio` |
-| `MCP_SESSION_MODE` | HTTP session mode: `auto`, `stateful`, or `stateless`. This server ships an explicit `stateless` value; the framework schema default is `auto`, which resolves to stateful. | `stateless` |
+| `MCP_SESSION_MODE` | HTTP session mode: `auto`, `stateful`, or `stateless`. `src/index.ts` declares `stateless` via `createApp({ sessionMode })` — no tool suspends for caller input, so no session state is needed. Setting this overrides the declaration; the framework schema default is `auto`, which resolves to stateful. | `stateless` |
 | `MCP_HTTP_PORT` | HTTP server port. | `3010` |
 | `MCP_HTTP_ENDPOINT_PATH` | HTTP endpoint path. | `/mcp` |
 | `MCP_PUBLIC_URL` | Public origin override for TLS-terminating reverse-proxy deployments. | none |
@@ -326,7 +389,7 @@ See [`CLAUDE.md`](./CLAUDE.md) for development guidelines and architectural rule
 
 ## Contributing
 
-Issues and pull requests are welcome. Run checks and tests before submitting:
+Issues are welcome. Run checks and tests before submitting:
 
 ```sh
 bun run devcheck
