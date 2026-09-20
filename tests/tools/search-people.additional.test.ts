@@ -496,15 +496,38 @@ describe('searchPeople — party is an output field, not a filter (issue #39)', 
       party: 'Democratic',
     } as never);
 
+    /**
+     * An argument rejection is `InvalidParams` (-32602), not `ValidationError` (-32007): the
+     * framework parses arguments before the handler runs, so the call never reaches this tool's
+     * own validation. A `ValidationError` thrown inside a handler, and an output-schema
+     * rejection, keep -32007.
+     */
     expect(result).toMatchObject({
       isError: true,
       structuredContent: {
         error: {
-          code: JsonRpcErrorCode.ValidationError,
+          code: JsonRpcErrorCode.InvalidParams,
           message: expect.stringContaining('party'),
+          data: {
+            reason: 'invalid_arguments',
+            // The synthesized hint names the keys the tool does accept, which is what makes the
+            // rejection actionable for a model that guessed at a filter.
+            recovery: { hint: expect.stringContaining('jurisdiction') },
+          },
         },
       },
     });
+    /**
+     * Both consumption surfaces have to carry the rejection: a client reading `content[]` sees
+     * the same offending key, the same hint, and the machine-readable reason. Asserted by
+     * containment — the framework appends its `Recovery:` and `(reason …)` lines, so a
+     * byte-exact pin would break on the next framework release.
+     */
+    const [block] = result.content ?? [];
+    const text = (block as { text: string }).text;
+    expect(text).toContain('party');
+    expect(text).toContain('Recovery: Unknown key party');
+    expect(text).toContain('reason invalid_arguments');
     expect(searchPeopleSpy).not.toHaveBeenCalled();
   });
 
