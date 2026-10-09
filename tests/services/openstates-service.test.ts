@@ -6,7 +6,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, type McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // We test the normalisation logic by exercising it via the service's
@@ -20,6 +20,7 @@ import {
   getOpenStatesApiService,
   initOpenStatesApiService,
   OpenStatesApiService,
+  shutdownOpenStatesApiService,
 } from '@/services/openstates/openstates-service.js';
 import type { PersonListResponse, RawPerson } from '@/services/openstates/types.js';
 
@@ -1115,9 +1116,9 @@ describe('fetchJson — caching and rate-limit fail-fast', () => {
   });
 
   /**
-   * The recovery hint is resolved from the calling definition's `upstream_timeout` contract entry,
-   * so a 504 arrives with the fix named — narrow the query — rather than as a dead end that
-   * invites the agent to retry the same call.
+   * The service raises `upstream_timeout` carrying the reason alone; the framework fills the hint
+   * from the calling definition's contract entry, so a 504 arrives with the fix named — narrow the
+   * query — rather than as a dead end that invites the agent to retry the same call.
    */
   it('carries the calling definition recovery hint on a 504', async () => {
     vi.stubGlobal(
@@ -1126,17 +1127,26 @@ describe('fetchJson — caching and rate-limit fail-fast', () => {
         Promise.resolve(new Response('', { status: 504, statusText: 'Gateway Time-out' })),
       ),
     );
-    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
-    const contractCtx = createMockContext({
-      tenantId: 'test-tenant',
-      errors: searchBills.errors,
-    });
+    initOpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
 
-    await expect(
-      svc.searchBills({ q: 'housing', page: 1, per_page: 1 }, contractCtx),
-    ).rejects.toMatchObject({
-      data: { recovery: { hint: expect.stringContaining('jurisdiction') } },
-    });
+    try {
+      const result = await runToolContract(searchBills, { q: 'housing', page: 1, per_page: 1 });
+
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: {
+            code: JsonRpcErrorCode.Timeout,
+            data: {
+              reason: 'upstream_timeout',
+              recovery: { hint: expect.stringContaining('jurisdiction') },
+            },
+          },
+        },
+      });
+    } finally {
+      shutdownOpenStatesApiService();
+    }
   });
 
   /**

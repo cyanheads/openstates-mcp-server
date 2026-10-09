@@ -344,9 +344,6 @@ export const getBill = tool('openstates_get_bill', {
       throw ctx.fail(
         'missing_lookup_params',
         'Provide openstates_id OR jurisdiction + session + bill_id.',
-        {
-          ...ctx.recoveryFor('missing_lookup_params'),
-        },
       );
     }
 
@@ -359,7 +356,7 @@ export const getBill = tool('openstates_get_bill', {
     ).catch((err: unknown) => {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         const id = input.openstates_id ?? `${input.jurisdiction}/${input.session}/${input.bill_id}`;
-        throw ctx.fail('not_found', `Bill not found: ${id}`, { ...ctx.recoveryFor('not_found') });
+        throw ctx.fail('not_found', `Bill not found: ${id}`);
       }
       throw err;
     });

@@ -47,9 +47,7 @@ export const jurisdictionResource = resource('openstates://jurisdiction/{jurisdi
       .getJurisdiction(params.jurisdiction_id, ['legislative_sessions'], ctx)
       .catch((err: unknown) => {
         if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-          throw ctx.fail('not_found', `Jurisdiction not found: ${params.jurisdiction_id}`, {
-            ...ctx.recoveryFor('not_found'),
-          });
+          throw ctx.fail('not_found', `Jurisdiction not found: ${params.jurisdiction_id}`);
         }
         throw err;
       });

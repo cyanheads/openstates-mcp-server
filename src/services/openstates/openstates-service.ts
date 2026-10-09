@@ -323,7 +323,7 @@ export class OpenStatesApiService {
       // attempt itself rejects and is classified there, which the classifier recognizes and leaves
       // alone; mid-backoff, `withRetry`'s sleep rejects with the raw abort reason and never passes
       // through that classifier at all, so it is normalized here.
-      throw budget.signal.aborted ? this.classifyUpstreamFailure(err, url, ctx, 'budget') : err;
+      throw budget.signal.aborted ? this.classifyUpstreamFailure(err, url, 'budget') : err;
     } finally {
       clearTimeout(budgetTimer);
     }
@@ -381,7 +381,7 @@ export class OpenStatesApiService {
         : budgetSignal.aborted
           ? 'budget'
           : undefined;
-      throw this.classifyUpstreamFailure(err, url, ctx, expiry);
+      throw this.classifyUpstreamFailure(err, url, expiry);
     } finally {
       clearTimeout(timer);
     }
@@ -413,7 +413,6 @@ export class OpenStatesApiService {
   private classifyUpstreamFailure(
     err: unknown,
     url: string,
-    ctx: Context,
     expiry: TimeoutSource | undefined,
   ): unknown {
     const mcpError = err instanceof McpError ? err : undefined;
@@ -442,7 +441,6 @@ export class OpenStatesApiService {
           ...(status === undefined ? {} : { status }),
           reason: 'upstream_timeout',
           retryable: false,
-          ...ctx.recoveryFor('upstream_timeout'),
         },
         { cause: err },
       );

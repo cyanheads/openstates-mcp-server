@@ -115,9 +115,7 @@ export const getCommittee = tool('openstates_get_committee', {
       )
       .catch((err: unknown) => {
         if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-          throw ctx.fail('not_found', `Committee not found: ${input.committee_id}`, {
-            ...ctx.recoveryFor('not_found'),
-          });
+          throw ctx.fail('not_found', `Committee not found: ${input.committee_id}`);
         }
         throw err;
       });

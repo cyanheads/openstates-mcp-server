@@ -177,9 +177,7 @@ export const getEvent = tool('openstates_get_event', {
       )
       .catch((err: unknown) => {
         if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-          throw ctx.fail('not_found', `Event not found: ${input.event_id}`, {
-            ...ctx.recoveryFor('not_found'),
-          });
+          throw ctx.fail('not_found', `Event not found: ${input.event_id}`);
         }
         throw err;
       });

@@ -5,7 +5,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { listJurisdictions } from '@/mcp-server/tools/definitions/list-jurisdictions.tool.js';
 
@@ -278,18 +278,18 @@ describe('listJurisdictions — out-of-range page', () => {
   });
 
   it('maps an upstream not-found to invalid_page with a recovery hint', async () => {
-    const ctx = createMockContext({ errors: listJurisdictions.errors });
-    const input = listJurisdictions.input.parse({ page: 99 });
+    // The declared hint is filled by the framework, so the assertion runs through the contract.
+    const result = await runToolContract(listJurisdictions, { page: 99 });
 
-    const err = await Promise.resolve(listJurisdictions.handler(input, ctx)).catch(
-      (e: unknown) => e,
-    );
-
-    expect((err as McpError).data).toMatchObject({
-      reason: 'invalid_page',
-      recovery: { hint: expect.stringContaining('max_page') },
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          message: expect.stringContaining('invalid page, must be in [1, 2]'),
+          data: { reason: 'invalid_page', recovery: { hint: expect.stringContaining('max_page') } },
+        },
+      },
     });
-    expect((err as McpError).message).toContain('invalid page, must be in [1, 2]');
   });
 });
 

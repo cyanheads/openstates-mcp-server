@@ -452,17 +452,19 @@ describe('searchPeople — out-of-range page', () => {
   });
 
   it('maps an upstream not-found to invalid_page with a recovery hint', async () => {
-    const ctx = createMockContext({ errors: searchPeople.errors });
-    const input = searchPeople.input.parse({ jurisdiction: 'wa', page: 99 });
+    // The declared hint is filled by the framework, so the assertion runs through the contract.
+    const result = await runToolContract(searchPeople, { jurisdiction: 'wa', page: 99 });
 
-    const err = await Promise.resolve(searchPeople.handler(input, ctx)).catch((e: unknown) => e);
-
-    expect((err as McpError).data).toMatchObject({
-      reason: 'invalid_page',
-      recovery: { hint: expect.stringContaining('max_page') },
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          // The upstream constraint survives the remap — it names the range the caller must stay inside.
+          message: expect.stringContaining('invalid page, must be in [1, 5]'),
+          data: { reason: 'invalid_page', recovery: { hint: expect.stringContaining('max_page') } },
+        },
+      },
     });
-    // The upstream constraint survives the remap — it names the range the caller must stay inside.
-    expect((err as McpError).message).toContain('invalid page, must be in [1, 5]');
   });
 });
 

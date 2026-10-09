@@ -277,11 +277,11 @@ export const searchPeople = tool('openstates_search_people', {
         },
         ctx,
       )
-      // The service has already folded the upstream `detail` into the message, so the reason and
-      // recovery hint are all that is missing.
+      // The service has already folded the upstream `detail` into the message, so the reason is
+      // all that is missing; the framework fills the declared recovery hint.
       .catch((err: unknown) => {
         if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-          throw ctx.fail('invalid_page', err.message, { ...ctx.recoveryFor('invalid_page') });
+          throw ctx.fail('invalid_page', err.message);
         }
         throw err;
       });

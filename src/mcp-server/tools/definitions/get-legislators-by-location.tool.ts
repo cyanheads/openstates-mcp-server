@@ -235,9 +235,6 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
       throw ctx.fail(
         'invalid_coordinate',
         `Invalid coordinates: latitude=${input.latitude}, longitude=${input.longitude}`,
-        {
-          ...ctx.recoveryFor('invalid_coordinate'),
-        },
       );
     }
 

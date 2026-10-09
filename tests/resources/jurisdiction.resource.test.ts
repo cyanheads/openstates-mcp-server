@@ -5,6 +5,7 @@
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createWorkerHandler } from '@cyanheads/mcp-ts-core/worker';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { jurisdictionResource } from '@/mcp-server/resources/definitions/jurisdiction.resource.js';
 
@@ -68,7 +69,7 @@ describe('jurisdictionResource', () => {
     );
   });
 
-  it('rethrows a service NotFound as a typed not-found error with the invalid id and recovery', async () => {
+  it('rethrows a service NotFound as a typed not-found error with the invalid id', async () => {
     // The real not-found path is a rejected McpError (upstream 404 → NotFound), never a
     // resolved null — the service's fetchJson only ever throws on a non-OK response. The
     // resource must translate that into its own typed error, mirroring openstates_get_jurisdiction.
@@ -84,6 +85,55 @@ describe('jurisdictionResource', () => {
     await expect(jurisdictionResource.handler(params, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.NotFound,
       message: 'Jurisdiction not found: not-a-real-jurisdiction',
+      data: { reason: 'not_found' },
+    });
+  });
+
+  it('puts the declared not-found recovery hint on the wire', async () => {
+    // A direct handler call returns the throw site's error unfilled; the resource factory adds the
+    // declared hint, so the read goes through a served definition.
+    mockService.getJurisdiction.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.NotFound, 'OpenStates returned HTTP 404 Not Found.'),
+    );
+    const worker = createWorkerHandler({
+      name: 'openstates-mcp-server',
+      title: 'openstates-mcp-server',
+      resources: [jurisdictionResource],
+    });
+    const uri = 'openstates://jurisdiction/not-a-real-jurisdiction';
+    const response = await worker.fetch(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json, text/event-stream',
+          'Content-Type': 'application/json',
+          'MCP-Protocol-Version': '2026-07-28',
+          'Mcp-Method': 'resources/read',
+          'Mcp-Name': uri,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'resources/read',
+          params: {
+            uri,
+            _meta: {
+              'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+              'io.modelcontextprotocol/clientInfo': { name: 'resource-test', version: '1.0.0' },
+              'io.modelcontextprotocol/clientCapabilities': {},
+            },
+          },
+        }),
+      }),
+      {} as never,
+      { waitUntil: () => {}, passThroughOnException: () => {} } as never,
+    );
+    const text = await response.text();
+    const dataLine = text.split('\n').find((line) => line.startsWith('data:'));
+    const body = JSON.parse(dataLine ? dataLine.slice(5) : text);
+
+    expect(body.error).toMatchObject({
+      code: JsonRpcErrorCode.NotFound,
       data: {
         reason: 'not_found',
         recovery: { hint: expect.stringContaining('openstates_list_jurisdictions') },
