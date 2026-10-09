@@ -12,14 +12,14 @@
       "url": "https://openstates.caseyjhand.com/mcp"
     }
   ],
-  "version": "0.3.2",
+  "version": "0.3.3",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openstates-mcp-server",
       "runtimeHint": "npx",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "environmentVariables": [
         {
           "name": "OPENSTATES_API_KEY",
@@ -65,7 +65,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/openstates-mcp-server",
       "runtimeHint": "npx",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "environmentVariables": [
         {
           "name": "MCP_TRANSPORT_TYPE",
