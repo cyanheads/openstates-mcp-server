@@ -65,6 +65,9 @@ describe('either/or scope rejection has the same shape on both tools', () => {
  * Each suite carries its own closures rather than a shared tool reference so both handlers' input
  * types stay checked. `run` returns whether the input survived the schema: a `true` marks a shape
  * that reached the handler, which the assertions below then hold to the same zero-request bar.
+ *
+ * Wrong-type shapes send a boolean: the framework repairs an integer sent for a string and a lone
+ * string sent for an array before the schema sees them, so either would arrive as a scoped call.
  */
 const SCOPE_SUITES = [
   {
@@ -76,7 +79,7 @@ const SCOPE_SUITES = [
       { jurisdiction: '', q: '' },
       { jurisdiction: null },
       { q: null },
-      { jurisdiction: 0 },
+      { jurisdiction: false },
       { q: [] },
       { q: {} },
       { session: '2025' },
@@ -113,7 +116,7 @@ const SCOPE_SUITES = [
       { jurisdiction: null },
       { id: null },
       { id: {} },
-      { id: 'ocd-person/9eddb3cd-868e-42ba-831a-b415fd7ed445' },
+      { id: true },
       { name: 'Ferguson' },
       { org_classification: 'upper' },
       { district: '37' },
