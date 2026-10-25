@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.4](changelog/0.3.x/0.3.4.md) — 2026-10-25
+
+Updates framework error text and startup validation, refreshes dependencies, and aligns packaging templates.
+
 ## [0.3.3](changelog/0.3.x/0.3.3.md) — 2026-10-08
 
 Adopts mcp-ts-core 0.13.14: wrong-typed tool arguments such as numeric strings, lone strings for arrays, and null optionals are repaired before validation, tool error results carry a request id, server.json npm entries launch with npx, and the Docker image installs dependencies on the build platform.
