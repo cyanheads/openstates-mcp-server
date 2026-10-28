@@ -1,6 +1,6 @@
 # openstates-mcp-server - Directory Structure
 
-Generated on: 2026-10-09 04:25:06
+Generated on: 2026-10-28 14:50:33
 
 ```text
 openstates-mcp-server/
@@ -27,6 +27,7 @@ openstates-mcp-server/
 │   ├── 0.1.x/
 │   ├── 0.2.x/
 │   ├── 0.3.x/
+│   ├── 0.4.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md
@@ -39,6 +40,8 @@ openstates-mcp-server/
 │   ├── add-resource/
 │   │   └── SKILL.md
 │   ├── add-service/
+│   │   └── SKILL.md
+│   ├── add-skill/
 │   │   └── SKILL.md
 │   ├── add-test/
 │   │   └── SKILL.md
@@ -137,6 +140,9 @@ openstates-mcp-server/
 │   ├── release-github.ts
 │   ├── split-changelog.ts
 │   └── tree.ts
+├── skills/
+│   └── openstates-guide/
+│       └── SKILL.md
 ├── src/
 │   ├── config/
 │   │   └── server-config.ts
@@ -169,11 +175,16 @@ openstates-mcp-server/
 ├── tests/
 │   ├── config/
 │   │   └── server-config.test.ts
+│   ├── helpers/
+│   │   ├── commonmark.ts
+│   │   └── markdown-sweep.ts
 │   ├── prompts/
 │   │   ├── bill-research.prompt.test.ts
 │   │   └── legislator-profile.prompt.test.ts
 │   ├── resources/
 │   │   └── jurisdiction.resource.test.ts
+│   ├── scripts/
+│   │   └── clean-mcpb.test.ts
 │   ├── security/
 │   │   └── no-secret-leakage.test.ts
 │   ├── services/
@@ -213,7 +224,9 @@ openstates-mcp-server/
 ├── Dockerfile
 ├── LICENSE
 ├── manifest.json
+├── mcp.json
 ├── package.json
+├── plugin.json
 ├── README.md
 ├── server.json
 ├── tsconfig.build.json

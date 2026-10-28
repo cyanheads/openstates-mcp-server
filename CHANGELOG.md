@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.0](changelog/0.4.x/0.4.0.md) — 2026-10-28
+
+Publishes the openstates-guide agent skill as a skill:// resource, reports Open States rate caps as retryable rate_limited errors with retryAfter, rejects malformed bill, jurisdiction, committee, and event IDs before any request, and fixes event media/documents output, unicameral people search, and Markdown rendering of upstream strings.
+
 ## [0.3.4](changelog/0.3.x/0.3.4.md) — 2026-10-25
 
 Updates framework error text and startup validation, refreshes dependencies, and aligns packaging templates.
