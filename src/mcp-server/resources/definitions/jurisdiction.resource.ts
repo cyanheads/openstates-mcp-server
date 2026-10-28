@@ -4,10 +4,32 @@
  */
 
 import { resource, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError, validationError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
-export const jurisdictionResource = resource('openstates://jurisdiction/{jurisdiction_id}', {
+/** Percent-decodes the matched URI value once; a malformed escape is the caller's URI, not a server fault. */
+function decodeJurisdictionId(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch (err) {
+    if (!(err instanceof URIError)) throw err;
+    throw validationError(
+      'jurisdiction_id has a malformed percent-escape. Write the ID as returned by openstates_list_jurisdictions, or percent-encode it completely.',
+      {},
+      { cause: err },
+    );
+  }
+}
+
+/**
+ * `{+jurisdiction_id}` is RFC 6570 reserved expansion: the SDK matches it as `.+` rather than
+ * `[^/,]+`, so the slash-delimited OCD ID `openstates_list_jurisdictions` returns routes, and its
+ * `expand()` writes that ID back out with `/` and `:` intact. The SDK hands the matched value over
+ * still percent-encoded (`New%20York`, `ocd-jurisdiction%2F…`), so the handler decodes it exactly
+ * once before the lookup. The decode lives in the handler, not a `params` transform, because
+ * params must stay JSON-Schema-serializable for `resources/templates/list`.
+ */
+export const jurisdictionResource = resource('openstates://jurisdiction/{+jurisdiction_id}', {
   name: 'openstates_jurisdiction',
   title: 'Jurisdiction Metadata',
   description:
@@ -18,7 +40,7 @@ export const jurisdictionResource = resource('openstates://jurisdiction/{jurisdi
     jurisdiction_id: z
       .string()
       .describe(
-        'OCD jurisdiction ID, state name (e.g., "Washington"), or two-letter abbreviation (e.g., "wa").',
+        'OCD jurisdiction ID as returned by openstates_list_jurisdictions, written with its slashes intact (e.g., "ocd-jurisdiction/country:us/state:wa/government"), state name (e.g., "Washington" or "New York"), or two-letter abbreviation (e.g., "wa"). Percent-encoded forms are decoded once.',
       ),
   }),
   errors: [
@@ -39,15 +61,25 @@ export const jurisdictionResource = resource('openstates://jurisdiction/{jurisdi
       // handler never sees the expiry it would need to throw on.
       thrownBy: 'service',
     },
+    {
+      reason: 'rate_limited',
+      code: JsonRpcErrorCode.RateLimited,
+      when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+      recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+      retryable: true,
+      // Raised by the service, which reads the cap from the 429 body or its own daily-budget guard.
+      thrownBy: 'service',
+    },
   ],
 
   async handler(params, ctx) {
+    const jurisdictionId = decodeJurisdictionId(params.jurisdiction_id);
     const svc = getOpenStatesApiService();
     const jurisdiction = await svc
-      .getJurisdiction(params.jurisdiction_id, ['legislative_sessions'], ctx)
+      .getJurisdiction(jurisdictionId, ['legislative_sessions'], ctx)
       .catch((err: unknown) => {
         if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-          throw ctx.fail('not_found', `Jurisdiction not found: ${params.jurisdiction_id}`);
+          throw ctx.fail('not_found', `Jurisdiction not found: ${jurisdictionId}`);
         }
         throw err;
       });
