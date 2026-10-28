@@ -24,7 +24,7 @@ Annotations on every tool: `readOnlyHint: true`, `idempotentHint: true`, `openWo
 
 | URI Template | Description | Pagination |
 |:-------------|:------------|:-----------|
-| `openstates://jurisdiction/{jurisdiction_id}` | Jurisdiction metadata including current sessions, coverage dates, and bill/people update timestamps. Useful as stable reference context before querying bills or people. | No |
+| `openstates://jurisdiction/{+jurisdiction_id}` | Jurisdiction metadata including current sessions, coverage dates, and bill/people update timestamps. Useful as stable reference context before querying bills or people. | No |
 
 ### Prompts
 
@@ -58,7 +58,7 @@ An MCP server wrapping the [Open States API v3](https://v3.openstates.org/) — 
 ## Requirements
 
 - Read-only access to all Open States endpoints
-- API key authentication via `X-API-KEY` header (free, rate limits undocumented but enforced)
+- API key authentication via `X-API-KEY` header (free; the default tier allows 10 requests/minute and 250/day, counted in fixed UTC windows with rejected requests included)
 - Page/per_page pagination (1-indexed; responses return `max_page` and `total_items`)
 - `include` parameter support to request related data inline (avoid N+1 patterns)
 - Geo-to-legislator lookup (`/people.geo`) — high-value constituent feature
@@ -171,6 +171,9 @@ errors: [
   { reason: 'invalid_page', code: NotFound,
     when: 'Open States rejected the request as not found — page is past the last page for this query',
     recovery: 'Request a page within the max_page bound returned by a previous call; the error message names the valid range.' },
+  { reason: 'rate_limited', code: RateLimited, retryable: true,
+    when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+    recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.' },
 ]
 // The jurisdiction-or-q rule is an input-schema refinement, not a contract entry — it is rejected
 // during input validation, so no `missing_scope` reason exists to declare.
@@ -205,7 +208,7 @@ upstream 404s with the valid range, which the tool surfaces before the notice pa
 | `jurisdiction` | `string` optional | State name or OCD-ID. Required when using path-based lookup (with `session` + `bill_id`). |
 | `session` | `string` optional | Session identifier. Required with `jurisdiction` + `bill_id`. |
 | `bill_id` | `string` optional | Bill identifier as used in the legislature (e.g., `"HB 1000"`, `"SB 42"`). Required with `jurisdiction` + `session`. |
-| `openstates_id` | `string` optional | OCD bill ID (e.g., from `openstates_search_bills` results). Alternative to the three-part path. Provide either `openstates_id` OR the (`jurisdiction` + `session` + `bill_id`) triple. |
+| `openstates_id` | `string` optional | OCD bill ID: `ocd-bill/` + UUID, copied from `openstates_search_bills` results. Checked locally (case and surrounding whitespace normalized; a `<jurisdiction>/<session>/<bill_id>` path is also accepted) — any other value fails with `invalid_openstates_id` before a request is issued. Alternative to the three-part path. Provide either `openstates_id` OR the (`jurisdiction` + `session` + `bill_id`) triple. |
 | `include` | `array(enum)` optional | Same options as search: `sponsorships`, `actions`, `votes`, `abstracts`, `other_titles`, `other_identifiers`, `documents`, `versions`, `related_bills`. Default behavior returns core bill fields only. |
 
 **Output:**
@@ -255,11 +258,20 @@ upstream 404s with the valid range, which the tool surfaces before the notice pa
 ```ts
 errors: [
   { reason: 'missing_lookup_params', code: ValidationError,
-    when: 'Neither openstates_id nor the jurisdiction+session+bill_id triple is complete',
-    recovery: 'Provide either openstates_id (from search results) or all three of: jurisdiction, session, and bill_id.' },
+    when: 'Neither openstates_id nor the complete jurisdiction+session+bill_id triple was provided.',
+    recovery: 'Provide either openstates_id (from openstates_search_bills results) or all three of: jurisdiction, session, and bill_id.' },
+  { reason: 'invalid_openstates_id', code: ValidationError,
+    when: 'openstates_id is not an Open States bill ID — neither "ocd-bill/" followed by a UUID nor a jurisdiction/session/bill_id path.',
+    recovery: 'Copy the id field ("ocd-bill/" followed by a UUID) from an openstates_search_bills result and pass it unchanged, or look the bill up with jurisdiction, session, and bill_id instead.' },
   { reason: 'not_found', code: NotFound,
-    when: 'Bill does not exist at the given path',
-    recovery: 'Verify the session identifier with openstates_get_jurisdiction and confirm the bill_id format matches the legislature\'s convention (e.g., "HB 1000" not "HB1000").' },
+    when: 'No bill exists at the given OCD bill ID or jurisdiction + session + bill_id path.',
+    recovery: 'Find the bill with openstates_search_bills and pass its id as openstates_id. For a jurisdiction + session + bill_id lookup, also confirm the session identifier with openstates_get_jurisdiction (include=legislative_sessions).' },
+  { reason: 'upstream_timeout', code: Timeout,
+    when: 'Open States did not answer within the per-request timeout.',
+    recovery: 'Retry the lookup once; if it repeats, request fewer include values — votes, versions, and documents each enlarge the upstream response.' },
+  { reason: 'rate_limited', code: RateLimited, retryable: true,
+    when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+    recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.' },
 ]
 ```
 
@@ -276,7 +288,7 @@ errors: [
 | `jurisdiction` | `string` optional (`.min(1)`) | State name or OCD-ID. Required unless `id` is provided — an unscoped search spans all 56 jurisdictions and exceeds the upstream timeout. |
 | `id` | `array(string)` optional (`.min(1)`) | OCD person IDs, sent as one repeated `id=` parameter per entry. Required unless `jurisdiction` is provided: it bounds the query by naming records rather than by scanning one, so it needs no jurisdiction alongside it. |
 | `name` | `string` optional | Name or partial name to match (case-insensitive substring). |
-| `org_classification` | `z.enum(['legislature', 'executive', 'lower', 'upper', 'government'])` optional | Filter by role type. `upper` = Senate/upper chamber; `lower` = House/lower chamber; `executive` = governors and executive officials; `legislature` = every legislator, resolved server-side to the `upper` + `lower` union (see below). Omitting the filter returns every officeholder, executive included — not equivalent to `legislature`. |
+| `org_classification` | `z.enum(['legislature', 'executive', 'lower', 'upper', 'government'])` optional | Filter by role type. `upper` = Senate/upper chamber; `lower` = House/lower chamber; `executive` = governors and executive officials; `legislature` = every legislator, resolved server-side to the `upper` + `lower` + `legislature` union (see below). Omitting the filter returns every officeholder, executive included — not equivalent to `legislature`. |
 | `district` | `string` optional | District label (e.g., `"1"`, `"37"`, `"At-Large"`). District formats vary by state. |
 | `include` | `array(z.enum(['other_names', 'other_identifiers', 'links', 'sources', 'offices']))` optional | `offices` includes phone, fax, and address. `links` includes website and social links. |
 | `page` | `number` default 1 | Page number. |
@@ -320,6 +332,9 @@ errors: [
   { reason: 'invalid_page', code: NotFound,
     when: 'Open States rejected the request as not found — page is past the last page for this query',
     recovery: 'Request a page within the max_page bound returned by a previous call; the error message names the valid range.' },
+  { reason: 'rate_limited', code: RateLimited, retryable: true,
+    when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+    recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.' },
 ]
 // The jurisdiction-or-id rule is an input-schema refinement, not a contract entry — it is rejected
 // during input validation, so no `missing_scope` reason exists to declare.
@@ -339,25 +354,32 @@ that person does not belong to matches nothing, so the empty-result notice names
 
 **Decision — `legislature` is a server-side union, not a passthrough.** Upstream accepts
 `org_classification=legislature` (it is in the API's own `OrgClassification` enum) but matches
-nobody: only `upper`/`lower` (chambers) and `executive` (individual officials) are ever a
-*person's* current role, so the filter returns an empty set. The service resolves it to the
-`upper` + `lower` union instead. Omitting the filter is **not** a valid alias — measured live
+only members of unicameral bodies: in bicameral jurisdictions every legislator's role is
+`upper` or `lower`, so the filter returns an empty set, while Nebraska's senators (49) and the
+DC Council (13) carry `legislature` roles and have no `upper`/`lower` members. (Guam and the
+Virgin Islands are modeled unicameral but return no members.) The service resolves the value
+to the `upper` + `lower` + `legislature` union. The `legislature` arm is fetched lazily: for a
+jurisdiction-scoped query only when both chamber heads come back empty, so bicameral calls cost
+what they did before (two for page 1, at most four deep) and a unicameral one costs three (four
+deep); an unscoped `id` lookup, which can span both shapes, fetches all three heads at once.
+Always fetching three arms (a request added to 52 of 56 jurisdictions) and a static unicameral
+list (which cannot decide an `id` lookup) were rejected. Omitting the filter is **not** a valid alias — measured live
 for WA, `upper` (49) + `lower` (98) + `executive` (4) = 151 = exactly the omitted total, so
 omitting returns every officeholder including the executive branch, a different set from "all
 legislators". The value stays in the enum: it is the natural way to ask the question, and
 removing an accepted input would break callers.
 
-**Decision — the union is sliced, and the chamber totals are fetched before any page.** Two
+**Decision — the union is sliced, and the arm totals are fetched before any page.** Two
 upstream constraints (both measured, neither in `openapi.json`) shape this: `per_page` is
 capped at 50 (HTTP 400 above it), and any `page` past a chamber's `max_page` is an HTTP 404
 (`invalid page, must be in [1, N]`). The 404 rules out mapping a requested window straight onto
 each chamber's index space — a chamber's legal page range is unknowable until its total is
-known. So page 1 of each chamber (the only always-legal request) is fetched up front; it yields
-both totals and doubles as the head of the union, after which every page request is legal by
+known. So page 1 of each arm (`upper` and `lower` always, `legislature` per the lazy rule above; the only always-legal request) is fetched up front; it yields
+the totals and doubles as the head of the union, after which every page request is legal by
 construction. The caller's window is then sliced out of the *merged* set — never by threading
 the caller's `page`/`offset` into each chamber query, which would skip that many records in
 both and silently drop legislators as the caller pages. Costs two upstream calls for the common
-first page and at most four for a deep one, rather than draining both chambers.
+first page of a bicameral jurisdiction (three for a unicameral one) and at most four for a deep one, rather than draining any arm.
 
 ---
 
@@ -408,8 +430,14 @@ High-value constituent lookup — no equivalent in congressgov-mcp-server (which
 ```ts
 errors: [
   { reason: 'invalid_coordinate', code: ValidationError,
-    when: 'Lat/lng outside valid range or clearly non-US',
-    recovery: 'Latitude must be between 24-50 (continental US), longitude between -125 and -66. For Alaska: lat 51-72, lng -180 to -130.' },
+    when: 'Latitude or longitude is outside valid range.',
+    recovery: 'Latitude must be between -90 and 90, longitude between -180 and 180. For continental US: lat 24-50, lng -125 to -66. For Alaska: lat 51-72, lng -180 to -130.' },
+  { reason: 'upstream_timeout', code: Timeout,
+    when: 'Open States did not answer within the per-request timeout.',
+    recovery: 'Retry the lookup once; if it repeats, request fewer include values so the district lookup returns a smaller payload.' },
+  { reason: 'rate_limited', code: RateLimited, retryable: true,
+    when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+    recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.' },
 ]
 ```
 
@@ -424,7 +452,7 @@ errors: [
 |:------|:-----|:------------|
 | `jurisdiction` | `string` required (`.min(1)`) | State name or OCD-ID. An unscoped request exceeds the upstream timeout, so the schema rejects a call that omits it. |
 | `classification` | `z.enum(['committee', 'subcommittee'])` optional | Filter to parent committees or subcommittees. Omit for all. |
-| `chamber` | `z.enum(['upper', 'lower'])` optional | Filter by chamber. |
+| `chamber` | `z.enum(['upper', 'lower'])` optional | Filter by chamber. A chamber filter omits joint committees; omit `chamber` to include them. |
 | `parent` | `string` optional | OCD organization ID of a parent committee, to retrieve its subcommittees. |
 | `include` | `array(z.enum(['memberships', 'links', 'sources']))` optional | `memberships` includes the full roster with member roles. |
 | `page` | `number` default 1 | |
@@ -454,6 +482,17 @@ errors: [
 
 **Errors:**
 ```ts
+errors: [
+  { reason: 'upstream_timeout', code: Timeout,
+    when: 'Open States did not answer within the per-request timeout — the query is too broad.',
+    recovery: 'Narrow the request: keep the jurisdiction, add chamber or classification, and drop any include values you do not need.' },
+  { reason: 'invalid_page', code: NotFound,
+    when: 'Open States rejected the request as not found — page is past the last page for this query.',
+    recovery: 'Request a page within the max_page bound returned by a previous call; the error message names the valid range.' },
+  { reason: 'rate_limited', code: RateLimited, retryable: true,
+    when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+    recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.' },
+]
 // Empty results are NOT an error — return results: [] with pagination.
 // The coverage_note field in output communicates the experimental coverage gap to the agent.
 ```
@@ -476,8 +515,14 @@ errors: [
 ```ts
 errors: [
   { reason: 'not_found', code: NotFound,
-    when: 'Committee ID does not exist',
-    recovery: 'Use openstates_search_committees to discover valid committee IDs for a jurisdiction.' },
+    when: 'Committee ID does not exist in Open States.',
+    recovery: 'Use openstates_search_committees to discover valid committee IDs for a jurisdiction. Note that committee data is experimental and not all states have coverage.' },
+  { reason: 'upstream_timeout', code: Timeout,
+    when: 'Open States did not answer within the per-request timeout.',
+    recovery: 'Retry the lookup once; if it repeats, request fewer include values — memberships is the one that enlarges the upstream response.' },
+  { reason: 'rate_limited', code: RateLimited, retryable: true,
+    when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+    recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.' },
 ]
 ```
 
@@ -513,8 +558,8 @@ errors: [
     location?: { name, url, coordinates };
     links?: Array<{ url, note }>;
     sources?: Array<{ url, note }>;
-    media?: Array<{ url, note }>;
-    documents?: Array<{ url, note }>;
+    media?: Array<{ note, date, classification, offset?, links: Array<{ url, note? }> }>;
+    documents?: Array<{ note, date, classification, links: Array<{ url, note? }> }>;
     participants?: Array<{ name, entity_type, role?, organization?, person? }>;
     agenda?: Array<{
       description: string;
@@ -529,7 +574,17 @@ errors: [
 
 **Errors:**
 ```ts
-errors: []
+errors: [
+  { reason: 'upstream_timeout', code: Timeout,
+    when: 'Open States did not answer within the per-request timeout — the query is too broad.',
+    recovery: 'Narrow the search: bound it with after and before, set require_bills=true, and drop any include values you do not need.' },
+  { reason: 'invalid_page', code: NotFound,
+    when: 'Open States rejected the request as not found — page is past the last page for this query.',
+    recovery: 'Request a page within the max_page bound returned by a previous call; the error message names the valid range.' },
+  { reason: 'rate_limited', code: RateLimited, retryable: true,
+    when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+    recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.' },
+]
 // jurisdiction is enforced by the input schema, so no handler-level reason is needed for it.
 // Empty results are NOT an error — return results: [] with pagination.
 // The experimental coverage note belongs in the tool description, not as an error condition.
@@ -560,8 +615,8 @@ errors: []
   jurisdiction: { id: string; name: string };
   location?: { name: string; url?: string; coordinates?: unknown };
   links?: Array<{ url: string; note: string }>;
-  media?: Array<{ url: string; note: string }>;
-  documents?: Array<{ url: string; note: string }>;
+  media?: Array<{ note: string; date: string; classification: string; offset?: number; links: Array<{ url: string; note?: string }> }>;
+  documents?: Array<{ note: string; date: string; classification: string; links: Array<{ url: string; note?: string }> }>;
   sources?: Array<{ url: string; note: string }>;
   participants?: Array<{ name: string; entity_type: string; role?: string; organization?: unknown; person?: unknown }>;
   agenda?: Array<{
@@ -577,8 +632,14 @@ errors: []
 ```ts
 errors: [
   { reason: 'not_found', code: NotFound,
-    when: 'Event ID does not exist',
-    recovery: 'Use openstates_search_events to discover valid event IDs for a jurisdiction and date range.' },
+    when: 'Event ID does not exist in Open States.',
+    recovery: 'Use openstates_search_events with a jurisdiction and date range to discover valid event IDs. Note that event data is experimental and coverage varies widely by state.' },
+  { reason: 'upstream_timeout', code: Timeout,
+    when: 'Open States did not answer within the per-request timeout.',
+    recovery: 'Retry the lookup once; if it repeats, request fewer include values — agenda and participants each enlarge the upstream response.' },
+  { reason: 'rate_limited', code: RateLimited, retryable: true,
+    when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+    recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.' },
 ]
 ```
 
@@ -622,6 +683,21 @@ errors: [
 }
 ```
 
+**Errors:**
+```ts
+errors: [
+  { reason: 'upstream_timeout', code: Timeout,
+    when: 'Open States did not answer within the per-request timeout.',
+    recovery: 'Retry once; if it repeats, drop the include values and keep classification="state", which is the smallest inventory request.' },
+  { reason: 'invalid_page', code: NotFound,
+    when: 'Open States rejected the request as not found — page is past the last page for this classification.',
+    recovery: 'Request a page within the max_page bound returned by a previous call; the error message names the valid range.' },
+  { reason: 'rate_limited', code: RateLimited, retryable: true,
+    when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+    recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.' },
+]
+```
+
 ---
 
 ### 10. `openstates_get_jurisdiction`
@@ -653,8 +729,14 @@ errors: [
 ```ts
 errors: [
   { reason: 'not_found', code: NotFound,
-    when: 'Jurisdiction ID does not exist',
+    when: 'Jurisdiction ID does not exist in Open States.',
     recovery: 'Use openstates_list_jurisdictions to discover valid jurisdiction IDs. States use the pattern: ocd-jurisdiction/country:us/state:{2-letter-abbr}/government.' },
+  { reason: 'upstream_timeout', code: Timeout,
+    when: 'Open States did not answer within the per-request timeout.',
+    recovery: 'Retry the lookup once; if it repeats, request fewer include values — legislative_sessions and latest_runs each enlarge the upstream response.' },
+  { reason: 'rate_limited', code: RateLimited, retryable: true,
+    when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+    recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.' },
 ]
 ```
 
@@ -662,13 +744,15 @@ errors: [
 
 ## Resources
 
-### `openstates://jurisdiction/{jurisdiction_id}`
+### `openstates://jurisdiction/{+jurisdiction_id}`
 
 Exposes jurisdiction metadata as injectable context. Stable URI per jurisdiction — agents can preload session identifiers and coverage dates once per conversation rather than calling `openstates_get_jurisdiction` on every turn.
 
+**The template uses RFC 6570 reserved expansion (`{+…}`).** The SDK compiles `{var}` to `[^/,]+` and `{+var}` to `.+`, so only the reserved form routes the slash-delimited OCD ID `openstates_list_jurisdictions` returns (`openstates://jurisdiction/ocd-jurisdiction/country:us/state:al/government`). The SDK hands the matched value over without decoding it, so the handler percent-decodes it exactly once before the lookup (a `params` transform would break the JSON-Schema serialization `resources/templates/list` needs) — which also covers the percent-encoded form of the OCD ID and multi-word state names (`New%20York`). A malformed escape (`al%ZZ`, a lone `%`) is rejected as a validation error, not a server fault.
+
 Tool coverage: `openstates_get_jurisdiction` covers the same data for tool-only clients.
 
-**Not-found handling matches the tool path.** The resource declares the same `errors: [{ reason: 'not_found', … }]` contract as `openstates_get_jurisdiction` and catches the service-layer `NotFound` (the upstream 404 surfaces as a rejected `McpError`, never a falsy resolution), rethrowing a resource-local typed `not_found` — invalid ID in the message plus recovery pointing at `openstates_list_jurisdictions` — instead of leaking the raw upstream 404.
+**Not-found handling matches the tool path.** The resource declares the same `errors: [{ reason: 'not_found', … }]` contract as `openstates_get_jurisdiction` and catches the service-layer `NotFound` (the upstream 404 surfaces as a rejected `McpError`, never a falsy resolution), rethrowing a resource-local typed `not_found` — invalid ID in the message plus recovery pointing at `openstates_list_jurisdictions` — instead of leaking the raw upstream 404. It also declares the shared `rate_limited` entry (see the 429 handling under Services).
 
 ---
 
@@ -712,9 +796,9 @@ getJurisdiction(jurisdictionId: string, include?: string[]): Promise<Jurisdictio
 - `include` arrays passed as repeated query parameters: `?include=sponsorships&include=actions`
 - Use native `fetch` with `withRetry` from `@cyanheads/mcp-ts-core/utils`
 - Retry boundary wraps full fetch + parse pipeline
-- Backoff: 1–2s base (rate-limited upstream, undocumented limits)
-- Non-OK responses trigger `ServiceUnavailable`; HTML error responses detected and thrown as transient
-- **429 handling:** Rate limits are enforced but undocumented. Detect HTTP 429 explicitly and throw `ServiceUnavailable` with a retryable flag and a message indicating rate limiting. Do NOT treat 429 the same as 403 (auth failure — not retryable).
+- Backoff: 1.5s base between retries of transient failures (`RateLimited` is excluded from them — see 429 handling)
+- Non-OK responses keep the framework's status-based classification: 504 and the service's own deadlines become `upstream_timeout`, a 4xx `detail` from Open States is carried into the message, and 502/503 retry. An HTML body from the JSON API (a block page) is thrown as a non-retryable `ServiceUnavailable`.
+- **429 handling:** Open States answers 429 with `{"detail":"exceeded limit of N/min|hour|day: M"}` and no `Retry-After`; the default tier is 10/min and 250/day, counted in fixed UTC windows (the minute, the hour, the UTC day) with rejected requests included. The service throws `RateLimited` with `reason: 'rate_limited'`, `retryable: true`, the `detail` as the message, and `retryAfter` in seconds — the `Retry-After` header when one is sent, otherwise the seconds to the next UTC boundary of the window the `detail` names, and absent when neither is available. The call makes one attempt: `withRetry`'s `isTransient` is the framework default minus `RateLimited`, so a cap is never slept on inside the call (the wait can reach the MCP client's request timeout) and the caller decides whether to wait `retryAfter` and call again. The server's own daily request budget guard throws the same shape, keeping its self-imposed-cap message with `retryAfter` set to the seconds until the limiter frees a slot. Do NOT treat 429 the same as 403 (auth failure).
 - **Committee jurisdiction normalization:** `searchCommittees` resolves a full jurisdiction *name* to its abbreviation before calling `/committees` — upstream returns HTTP 500 when a state name is combined with a `chamber` filter, while the abbreviation and OCD-ID forms resolve correctly. A static name→abbreviation map (50 states + DC + 5 territories) keeps this deterministic and adds no request; abbreviations, OCD-IDs, and unrecognized values pass through untouched. Applied only to `searchCommittees` — `/bills`, `/people`, and `/events` return 200 on the same shape and need no normalization.
 - **Jurisdiction inventory merge:** `listJurisdictions` completes the advertised one-call inventory internally (see the `openstates_list_jurisdictions` complete-inventory merge above) — the 56-jurisdiction `state` set exceeds the upstream `per_page` ceiling of 52, so the default page-1 request fetches and merges the bounded set of pages into one synthesized response.
 
@@ -743,12 +827,12 @@ getJurisdiction(jurisdictionId: string, include?: string[]): Promise<Jurisdictio
 10. **`openstates_get_committee`** — Committee detail
 11. **`openstates_search_events`** — Experimental; lowest coverage across states
 12. **`openstates_get_event`** — Event detail
-13. **Resource** — `openstates://jurisdiction/{jurisdiction_id}`
+13. **Resource** — `openstates://jurisdiction/{+jurisdiction_id}`
 14. **Prompts** — `openstates_bill_research`, `openstates_legislator_profile`
 
 Each step is independently testable after the service layer is in place.
 
-**`format()` requirement:** Every tool must implement `format()` returning a markdown twin of `structuredContent`. Different MCP clients forward different surfaces to the model (Claude Code reads `structuredContent`; Claude Desktop reads `content[]` from `format()`). Both must carry the same data — `format()` is not optional and must render all fields the agent needs, not just a count or title.
+**`format()` requirement:** Every tool must implement `format()` returning a markdown twin of `structuredContent`. Different MCP clients forward different surfaces to the model (Claude Code reads `structuredContent`; Claude Desktop reads `content[]` from `format()`). Both must carry the same data — `format()` is not optional and must render all fields the agent needs, not just a count or title. Every upstream string renders through `escapeMarkdownInline`, every URL field through `markdownLink`, and an image URL through `markdownImage`, so a CommonMark parse of `content[]` reads back the value `structuredContent` carries; session identifiers render as a code span.
 
 ---
 
@@ -817,7 +901,7 @@ Each noun gets a search/list tool and a get-by-id tool rather than a single tool
 
 ### Jurisdictions as first-class tools (not just reference data)
 
-`openstates_list_jurisdictions` and `openstates_get_jurisdiction` are full tools, not just reference resources. They serve a real agent workflow need: discovering valid session identifiers before filtering bill searches. The jurisdiction resource at `openstates://jurisdiction/{id}` also exposes this for injectable context.
+`openstates_list_jurisdictions` and `openstates_get_jurisdiction` are full tools, not just reference resources. They serve a real agent workflow need: discovering valid session identifiers before filtering bill searches. The jurisdiction resource at `openstates://jurisdiction/{+jurisdiction_id}` also exposes this for injectable context.
 
 ### No `people.geo` disambiguation tool needed
 
@@ -854,7 +938,7 @@ The API requires a valid key — the `test` key is rejected with a 401. Field te
 - **Committee coverage gaps:** Not all states have committee data. Some states have committee structure but no membership data.
 - **Event coverage gaps:** Even fewer states have event/hearing data than committee data.
 - **Session identifier variation:** Each state uses its own session identifier scheme. There is no universal "current session" shorthand — agents must look up valid identifiers via `openstates_get_jurisdiction`.
-- **Rate limits undocumented:** The API enforces rate limits but doesn't publish them. The 403 response returned without a valid key is distinct from a rate-limit response; the server should watch for 429 responses and handle accordingly.
+- **Shared-key rate caps:** The hosted deployment rations one key across all callers, at 10 requests/minute and 250/day on the default tier. A cap surfaces as a retryable `rate_limited` error carrying `retryAfter`; the 403 returned without a valid key is a separate, non-retryable auth failure.
 - **per_page max is 20:** The API's per_page maximum is 20 (default 10). High-volume result sets will require multiple pages; the design surfaces `max_page` and `total_items` so callers can plan pagination.
 - **No vote rollup tool:** Individual vote events are accessible via `include=votes` on bill detail. There is no separate endpoint to search votes by legislator across all bills — constituent vote-tracking queries require fetching bill lists and inspecting vote arrays.
 
@@ -901,7 +985,7 @@ GET /bills?jurisdiction=wa&include=sponsorships&include=actions
 |:------|:-------|
 | `upper` | State senate (upper chamber) |
 | `lower` | State house/assembly (lower chamber) |
-| `legislature` | All legislators regardless of chamber |
+| `legislature` | Upstream: members of unicameral bodies only (NE, DC). The tool resolves it to the `upper` + `lower` + `legislature` union, so it returns every legislator |
 | `executive` | Governors, lieutenant governors, other executive officials |
 | `government` | All of the above |
 
@@ -919,7 +1003,7 @@ GET /bills?jurisdiction=wa&include=sponsorships&include=actions
 | 6 | No built-in address geocoding | Out of scope — this server wraps Open States, which only takes coordinates. Callers can use NWS weather server (already in ecosystem) or other geo tools to get coordinates from an address. | 2026-05-23 |
 | 7 | API key required — field testing blocked until key is provisioned | The test key is explicitly rejected. Document as blocker in design rather than discovering it during field-test phase. | 2026-05-23 |
 | 8 | No SDK dependency | No official JS/TS SDK exists for Open States v3. The API is straightforward REST — native fetch with typed wrappers is sufficient and avoids adding an unmaintained dependency. | 2026-05-23 |
-| 9 | `jurisdiction` resource at `openstates://jurisdiction/{id}` | Stable, injectable context for jurisdiction metadata. Session identifiers and coverage dates are useful pre-conversation context that clients can inject without a tool call. Same pattern as `congressgov`'s `congress://current`. | 2026-05-23 |
+| 9 | `jurisdiction` resource at `openstates://jurisdiction/{+jurisdiction_id}` | Stable, injectable context for jurisdiction metadata. Session identifiers and coverage dates are useful pre-conversation context that clients can inject without a tool call. Same pattern as `congressgov`'s `congress://current`. | 2026-05-23 |
 | 10 | Naming aligned with congressgov-mcp-server conventions | `openstates_` prefix, `{server}_{verb}_{noun}` pattern, same annotation set. The two servers are domain peers — consistent naming reduces cognitive load when both are active. | 2026-05-23 |
 | 11 | Committee search normalizes a jurisdiction name to its abbreviation before the request | Upstream `/committees` returns HTTP 500 when a full state name is combined with a `chamber` filter; abbreviation and OCD-ID forms resolve. A static name→abbreviation map sidesteps the fault deterministically with no extra request. Scoped to `searchCommittees` — bills/people/events return 200 on the same shape. | 2026-07-16 |
 | 12 | `listJurisdictions` merges pages internally to keep the one-call inventory promise | The `state` set (56) outgrew the upstream `per_page` ceiling of 52, so one page can no longer return the full inventory. The default page-1 request fetches and merges the bounded set of pages, mirroring the `legislature` union reassembly; large collections fall through to plain pagination. | 2026-07-16 |
@@ -936,3 +1020,9 @@ GET /bills?jurisdiction=wa&include=sponsorships&include=actions
 | 23 | Fields that arrive as `""` say so in `.describe()`; their types are left alone | Decision 21 fixed how an empty required string *renders*; a client reading `structuredContent` never sees that rendering, and `{"date": ""}` under a description reading `Version date.` is indistinguishable from a malformed record or a dropped field. Every output field Open States sends empty — or that this server's normalization substitutes `''` for when a key is absent — now documents the empty case, with a figure where the rate is high enough to act on (`LegislativeSession.classification` is empty on 299 of 1076 sessions, and 13 jurisdictions carry one on no session at all). Session endpoints additionally say an absent date is unknown rather than ongoing, since every observed one belongs to a session that concluded years ago. Widening the fields to `.nullable()`/`.optional()` and normalizing `""` away was rejected: it discards the difference between a value upstream left blank and a key it never sent, and breaks every client parsing the current contract to fix what is a documentation gap. | 2026-07-31 |
 | 24 | An either/or input rule is enforced by a handler guard with a typed `missing_scope` contract, never by a cross-field `.refine()` — converging `search_people` onto the shape `search_bills` already used | The two tools carry the same class of rule (`jurisdiction`-or-`q`, `jurisdiction`-or-`id`) and rejected the same violation in two incompatible shapes: a `-32007` domain error carrying `data.reason` and `data.recovery.hint` on one, a bare `-32602` `InvalidParams` message string on the other, so a client that parsed one rejection could not parse the other. Which layer advertises the rule is not the tiebreaker — JSON Schema `required` cannot express a choice, so neither form appears in `inputSchema`, and `errors[]` is not on the wire either: `registerTool` ships only `title`, `description`, `inputSchema`, `outputSchema`, and `annotations`, so a contract entry types `ctx.fail` and populates `data.reason` but advertises nothing. Pre-call, both forms reach a client through the tool description alone. What separates them is the failure the caller gets: the typed contract returns `-32007` with `data.reason` and an actionable `data.recovery.hint`, where a refinement carries a message string and can populate neither. That machine-readable rejection is worth more to an agent than a prose message, so `search_people` moved to the guard rather than `search_bills` moving to a refinement. The benefit is narrower than the shape suggests. An MCP SDK client that called `tools/list` caches a validator built from the advertised `outputSchema` — success-only, since that schema is `output.extend(enrichment)` — and `callTool` runs it against any result carrying `structuredContent` without checking `isError`. The typed error envelope cannot satisfy a success schema, so such a client throws `-32602 "Structured content does not match the tool's output schema"` and the caller never reaches `data.reason` or the recovery hint. This hits `search_bills` and `search_people` identically, and every tool here pairing an `output` schema with a typed error; the convergence holds, the payoff does not reach that client. The schema-refinement rejection this decision replaced was *not* affected — it carries no `structuredContent`, so the cached validator never runs and the caller gets a readable `isError` result. So the choice buys structure for clients that do not pre-validate and costs legibility for those that do. The root cause is upstream in the SDK client, tracked at cyanheads/mcp-ts-core#241 (`blocked-by-sdk`) and locally as #46; nothing in this server can widen the advertised schema without changing what every existing client sees. This does not reintroduce what decision 18 removed: that guard covered an unconditionally-required field the schema rejects first, which left its contract entry unreachable; an either/or guard is reachable, since a call carrying neither field is schema-valid and reaches the handler. Field *shape* stays in the schema — `.min(1)` on `id` keeps `{"id": []}` a validation failure, rather than letting an empty array satisfy `!input.id` and issue the unscoped query the rule exists to prevent. | 2026-07-31 |
 | 25 | An either/or input rule is enforced by a cross-field `.refine()` on both tools, and neither declares a `missing_scope` contract entry — reversing decision 24 | Decision 24 rested on two claims that did not survive checking against the running server. First, `errors[]` is not advertised: `registerTool` never forwards `tool.errors`, so a `tools/list` entry carries `name`, `title`, `description`, `inputSchema`, `outputSchema`, `annotations`, and `execution` — the string `missing_scope` appears nowhere in the payload. Pre-call, a guard and a refinement are equally invisible, and the tool description is the only surface carrying the rule either way; both tools' descriptions and both scope fields' `.describe()` prose therefore state it. Second, the typed error does not reach a client that lists tools first. An MCP SDK `Client` caches a validator built from the advertised `outputSchema` during `listTools()` and runs it against any result carrying `structuredContent` without checking `isError`. That schema is success-only (`output` extended with `enrichment`), so the error envelope cannot satisfy it: `callTool()` throws `-32602 Structured content does not match the tool's output schema: data must have required property 'results'…`, naming output fields in place of the input mistake the caller actually made. A refinement rejection carries no `structuredContent`, so the cached validator never runs and the caller reads a message that names the missing fields. Since essentially every client lists before calling, the post-call structure decision 24 traded for is unreachable on the path that matters, and what it cost is legibility. Both tools now enforce the rule at the schema edge, `search_bills` drops its `missing_scope` entry, and each tool's refinement message absorbs the recovery text its entry supplied — a refinement can populate no `data.recovery`, so the message is the caller's only instruction. `.min(1)` on every scope field is load-bearing under this form where it was not under a guard: a guard tests falsiness and catches `""`, a refinement tests `!== undefined` and does not, so without it an empty-string `jurisdiction` or `q` would satisfy the rule and issue the unscoped query. That also settles #47 — `{"jurisdiction": ""}` produces the identical `too_small` issue on both tools, where it previously split between a schema rejection on one and a typed `missing_scope` error on the other. The SDK-client behavior remains a live constraint on every other tool here pairing an `output` schema with a typed error contract, tracked as #46 and upstream at cyanheads/mcp-ts-core#241. | 2026-07-31 |
+| 26 | A rate cap is `rate_limited` with `retryable: true` and `retryAfter`, kept out of the in-call retry loop by a composed `isTransient` — not stamped `retryable: false` | The earlier `retryable: false` stamp stopped `withRetry` but rendered as "not retryable", so a caller could not tell a window to wait out from a permanent failure. A cap holds until its fixed UTC window rolls, so retrying inside the call is refused again (and still counted against the key) or sleeps toward the MCP client's request timeout; excluding `RateLimited` from `isTransient` gives one attempt while the wire still says the same call succeeds after `retryAfter`. Open States' 429 and the server's own daily budget guard share the one contract. | 2026-10-28 |
+| 27 | The jurisdiction resource template is `{+jurisdiction_id}` and the handler decodes the value once | The SDK compiles `{var}` to `[^/,]+`, which cannot route the slash-delimited OCD ID the list tool returns, and passes matched values undecoded, so percent-encoded forms and multi-word names reached upstream as literal `%2F` / `%20`. Reserved expansion matches `.+`; a single decode in the handler (not a `params` transform, which would break `resources/templates/list` serialization) makes every form the tools accept read the same resource, and a malformed escape fails as a validation issue rather than an internal error. | 2026-10-28 |
+| 28 | `get_bill` validates `openstates_id` locally and sends only the canonical route | The value was concatenated into the request path unvalidated, so an incomplete ID spent a shared-key request and returned a `not_found` whose recovery described the other lookup mode. The handler now resolves the value the way the URL builder does, accepts only `ocd-bill/<uuid>` (lowercased) or a three-part `<jurisdiction>/<session>/<bill_id>` path, and rejects the rest as `invalid_openstates_id` with no upstream call; `not_found` is reserved for well-formed IDs and paths upstream does not hold. | 2026-10-28 |
+| 29 | Every upstream string in `content[]` goes through the framework Markdown encoders: `escapeMarkdownInline` for text, `markdownLink`/`markdownImage` for URL fields, session identifiers as code spans; `appliedFilters` renders as JSON in an inline code span; the authored `coverageNote` stays prose | Raw interpolation let upstream text change Markdown structure, so `content[]` did not read back what `structuredContent` carries. | 2026-10-28 |
+| 30 | `legislature` resolves to the `upper` + `lower` + `legislature` union with a lazy third arm | Upstream `legislature` matches only unicameral members, so passing it through returns nothing for bicameral jurisdictions. Fetching the third arm lazily keeps bicameral cost unchanged; always fetching three arms and a static unicameral list were rejected. | 2026-10-28 |
+| 31 | The server publishes `skills/openstates-guide` via `createApp({ skills: 'skills' })` | Identifier chains, session pinning, vote-event reading, roster scans, and request budgeting are cross-tool knowledge no single tool description carries. The skill ships in the npm package, the Docker image, and the `.mcpb`. | 2026-10-28 |

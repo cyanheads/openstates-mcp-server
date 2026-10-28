@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.3.4-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openstates-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.3.1-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/openstates-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openstates-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.3.4-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/openstates-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.4.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/openstates-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/openstates-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.4%2B-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -46,7 +46,7 @@ US state legislatures from Open States: all 50 states, DC, and 5 US territories.
 
 | Resource | Description |
 |:---|:---|
-| `openstates://jurisdiction/{jurisdiction_id}` | Jurisdiction metadata including current sessions, coverage dates, and bill/people update timestamps |
+| `openstates://jurisdiction/{+jurisdiction_id}` | Jurisdiction metadata including current sessions, coverage dates, and bill/people update timestamps |
 
 All resource data is also reachable via tools. Use `openstates_get_jurisdiction` for programmatic jurisdiction lookups; the resource is useful for injecting jurisdiction context as stable reference material.
 
@@ -56,6 +56,14 @@ All resource data is also reachable via tools. Use `openstates_get_jurisdiction`
 |:---|:---|
 | `openstates_bill_research` | Structured framework for analyzing a state bill: summary, sponsors, committee referrals, action timeline, vote record, and related legislation |
 | `openstates_legislator_profile` | Research framework for profiling a legislator: sponsored bills, committee assignments, voting record, and contact details |
+
+### Skills
+
+| Skill | Description |
+|:---|:---|
+| [`openstates-guide`](./skills/openstates-guide/SKILL.md) | Identifier chains and gates for agents calling the tools: session pinning, reading vote events, committee roster scans, hearing searches, and the request budget |
+
+Plugin installs and the `.mcpb` bundle pick it up from `skills/`; MCP clients that support the Skills extension receive it from the server.
 
 ## Capability reference
 
@@ -71,10 +79,11 @@ All resource data is also reachable via tools. Use `openstates_get_jurisdiction`
 
 ### `openstates_get_bill` <sub>tool</sub>
 
-- Lookup by `openstates_id` (preferred, from search results) or the three-part path `jurisdiction` + `session` + `bill_id`; a call missing both fails with `missing_lookup_params`
+- Lookup by `openstates_id` (preferred) or the three-part path `jurisdiction` + `session` + `bill_id`; a call missing both fails with `missing_lookup_params`
+- `openstates_id` is `ocd-bill/<uuid>` copied from `openstates_search_bills` (case and surrounding whitespace are normalized); a `<jurisdiction>/<session>/<bill_id>` path is also accepted. Any other value fails locally with `invalid_openstates_id`, with no upstream call
 - Accepts legislature-format bill identifiers (e.g., `HB 1000`, `SB 42`)
 - `include` inlines sponsorships, actions, votes, versions, documents, abstracts, other titles/identifiers, and related bills
-- `not_found` when the ID or path resolves to nothing
+- `not_found` when a well-formed ID or a three-part path resolves to nothing
 
 ---
 
@@ -82,7 +91,7 @@ All resource data is also reachable via tools. Use `openstates_get_jurisdiction`
 
 - Either `jurisdiction` or `id` (OCD person IDs) is required — an unscoped search exceeds the upstream timeout even for a name-only query
 - `id` resolves any number of specific OCD person IDs in one call — the IDs that bill sponsorships and committee memberships hand back — and needs no jurisdiction alongside it
-- `org_classification`: `upper`/`lower`/`executive`/`legislature` (both chambers merged, executive officials excluded); omitting it returns every officeholder including executives
+- `org_classification`: `upper`/`lower`/`executive`/`legislature` (every legislator — both chambers, or the single body in Nebraska and DC; executive officials excluded); omitting it returns every officeholder including executives
 - Case-insensitive substring `name` match, plus `district`; `include` adds offices, links, other_names, other_identifiers, sources
 - Party is reported on every result but cannot be filtered on
 - Pagination up to 20 per page
@@ -102,7 +111,7 @@ All resource data is also reachable via tools. Use `openstates_get_jurisdiction`
 ### `openstates_search_committees` <sub>tool</sub>
 
 - `jurisdiction` is required — the schema rejects an all-states request
-- Filter by `classification` (`committee`/`subcommittee`) and `chamber`; `parent` scopes to one committee's subcommittees
+- Filter by `classification` (`committee`/`subcommittee`) and `chamber` (a chamber filter omits joint committees); `parent` scopes to one committee's subcommittees
 - `include=memberships` returns the full roster with member roles
 - Experimental: Open States is working to restore committee support and not all states have coverage — the output's `coverageNote` field always documents this
 - Pagination up to 20 per page
@@ -122,7 +131,7 @@ All resource data is also reachable via tools. Use `openstates_get_jurisdiction`
 - `jurisdiction` is required — the events endpoint has no all-states search
 - `after`/`before` scope to an ISO 8601 date range; `require_bills=true` filters to events with a bill on the agenda
 - `include=agenda,participants` returns full meeting context
-- Experimental: most states don't publish event data — an empty result may mean no coverage, not no events
+- Experimental: most states don't publish event data — an empty unfiltered result may mean no coverage, not no events; an empty filtered result (`require_bills`, `after`, `before`) names those filters in its notice
 - Pagination up to 20 per page
 
 ---
@@ -152,12 +161,12 @@ All resource data is also reachable via tools. Use `openstates_get_jurisdiction`
 
 ---
 
-### `openstates://jurisdiction/{jurisdiction_id}` <sub>resource</sub>
+### `openstates://jurisdiction/{+jurisdiction_id}` <sub>resource</sub>
 
-- `jurisdiction_id` accepts an OCD-ID, state name, or two-letter abbreviation
+- `jurisdiction_id` accepts the raw OCD ID (slashes intact) as `openstates_list_jurisdictions` returns it, a state name (multi-word allowed), or a two-letter abbreviation; percent-encoded forms are decoded once, and a malformed escape is a validation error
 - Returns jurisdiction metadata as `application/json`: current legislative sessions, coverage dates, bill/people update timestamps
 - Always includes `legislative_sessions` — use to prime session identifiers without a tool call
-- `not_found` when the identifier doesn't resolve
+- `not_found` when the identifier doesn't resolve; `rate_limited` when the shared key's request cap is reached
 
 ---
 
@@ -180,10 +189,11 @@ Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core): s
 Open States-specific:
 
 - Full Open States v3 API coverage: bills, people, committees, events, and jurisdictions
-- Dual lookup modes on bill and committee fetchers (OCD ID or structured path)
+- Dual lookup modes on the bill fetcher (OCD ID or jurisdiction + session + bill identifier)
 - Geo-based legislator lookup via the Open States people-by-geo endpoint, spanning both state and federal tiers
 - Server-level instructions prime the agent with session-discovery workflow and `include` parameter strategy before any tool call
 - Per-key request budgeting (`OPENSTATES_DAILY_REQUEST_BUDGET`) and a two-tier timeout ladder guard the shared upstream key
+- Every tool and the jurisdiction resource can fail with `rate_limited` when Open States' per-minute or daily cap, or the server's own daily budget, is reached: the error is retryable, carries `retryAfter` (seconds), and costs one attempt rather than a retry loop
 
 Agent-friendly output:
 
@@ -316,9 +326,9 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 |:---|:---|:---|
 | `OPENSTATES_API_KEY` | **Required.** Open States API key from [open.pluralpolicy.com](https://open.pluralpolicy.com/accounts/profile/). | — |
 | `OPENSTATES_API_BASE_URL` | Open States API base URL. | `https://v3.openstates.org` |
-| `OPENSTATES_DAILY_REQUEST_BUDGET` | Maximum upstream requests per rolling 24 hours. Once spent, calls are rejected before the request is issued, so an over-budget call costs nothing upstream. The default matches the v3 free-tier daily cap — raise it if your key's tier allows more. | `250` |
+| `OPENSTATES_DAILY_REQUEST_BUDGET` | Maximum upstream requests per rolling 24 hours. Once spent, calls are rejected before the request is issued as `rate_limited` with `retryAfter`, so an over-budget call costs nothing upstream. The default matches the v3 free-tier daily cap — raise it if your key's tier allows more. | `250` |
 | `OPENSTATES_REQUEST_TIMEOUT_MS` | Per-attempt upstream deadline in milliseconds (minimum `1000`). Expiry is non-retryable, so a request that cannot complete costs one wait rather than four. Open States answers a scoped query anywhere from under a second to ~57s and its own gateway gives up near 60s — lower this to fail sooner, raise it to wait out a slow query. | `45000` |
-| `OPENSTATES_TOTAL_REQUEST_BUDGET_MS` | Wall-clock ceiling in milliseconds for one call across every retry attempt and the backoff between them. The per-attempt deadline bounds a single request; this bounds the whole ladder, so a slow upstream that keeps failing retryably cannot hold a call open for the full retry sequence. Must be at least `OPENSTATES_REQUEST_TIMEOUT_MS` — startup rejects anything lower, which would abort every attempt before its own deadline applied. At the default of twice the deadline, an attempt that fails just short of its deadline still leaves a retry nearly a full deadline of its own. | `90000` |
+| `OPENSTATES_TOTAL_REQUEST_BUDGET_MS` | Wall-clock ceiling in milliseconds for one call across every retry attempt and the backoff between them. Must be at least `OPENSTATES_REQUEST_TIMEOUT_MS`; startup rejects a lower value. | `90000` |
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`. | `stdio` |
 | `MCP_SESSION_MODE` | HTTP session mode: `auto`, `stateful`, or `stateless`. `src/index.ts` declares `stateless` via `createApp({ sessionMode })` — no tool suspends for caller input, so no session state is needed. Setting this overrides the declaration; the framework schema default is `auto`, which resolves to stateful. | `stateless` |
 | `MCP_HTTP_PORT` | HTTP server port. | `3010` |
@@ -379,6 +389,7 @@ The Dockerfile defaults to HTTP transport, explicitly sets `MCP_SESSION_MODE=sta
 | `src/mcp-server/resources` | Resource definitions. Jurisdiction metadata resource. |
 | `src/mcp-server/prompts` | Prompt definitions. Bill research and legislator profile prompts. |
 | `src/services/openstates` | Open States API v3 service layer — HTTP client, request handling, domain types. |
+| `skills/` | Agent skills the server publishes to the agents calling its tools. |
 | `tests/` | Unit and integration tests mirroring `src/`. |
 
 ## Development guide
