@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdown, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const EventIncludeEnum = z.enum([
@@ -16,6 +17,67 @@ const EventIncludeEnum = z.enum([
   'agenda',
 ]);
 
+/** Open States `EventDocument` / `EventMedia` fields; the URLs sit in `links[]`, not on the record. */
+const attachmentFields = (noun: string) => ({
+  note: z
+    .string()
+    .describe(`${noun} description. Empty string when Open States recorded no description.`),
+  date: z.string().describe(`${noun} date. Empty string when Open States recorded no date.`),
+  classification: z
+    .string()
+    .describe(`${noun} classification. Empty string when Open States recorded none.`),
+  links: z
+    .array(
+      z
+        .object({
+          url: z.string().describe(`${noun} URL.`),
+          note: z
+            .string()
+            .optional()
+            .describe('Link description. Absent when Open States recorded none.'),
+        })
+        .describe(`One URL for this ${noun.toLowerCase()} record.`),
+    )
+    .describe(`URLs for this ${noun.toLowerCase()} record — usually one, occasionally none.`),
+});
+
+const MediaRecord = z
+  .object({
+    ...attachmentFields('Media'),
+    offset: z
+      .number()
+      .optional()
+      .describe(
+        'Start offset into the recording as Open States recorded it. Absent when not recorded.',
+      ),
+  })
+  .describe('Media record.');
+
+const DocumentRecord = z.object(attachmentFields('Document')).describe('Document record.');
+
+/**
+ * One media or document record as inline Markdown. Each URL is linked under its own note, else the
+ * record's note, else the URL itself; the record's note leads only when no link already carries it
+ * as a label; date, classification, and offset follow in parentheses when recorded. An entirely
+ * empty record renders as `''`.
+ */
+function attachmentText(record: z.infer<typeof MediaRecord>): string {
+  const e = escapeMarkdownInline;
+  const linked = record.links
+    .map((l) => markdownLink(l.note || record.note || l.url, l.url))
+    .join(', ');
+  const noteAsLabel = record.links.some((l) => !l.note);
+  const lead = record.note && !noteAsLabel ? e(record.note) : '';
+  const body = lead && linked ? `${lead}: ${linked}` : lead || linked;
+  const meta = [
+    record.date && e(record.date),
+    record.classification && e(record.classification),
+    record.offset !== undefined ? `offset ${record.offset}` : '',
+  ].filter(Boolean);
+  if (meta.length === 0) return body;
+  return body ? `${body} (${meta.join(', ')})` : `(${meta.join(', ')})`;
+}
+
 /** Loose ISO 8601 — date-only or datetime, both accepted by the Open States API. */
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]+)?$/;
 const isoDateMessage =
@@ -24,7 +86,7 @@ const isoDateMessage =
 export const searchEvents = tool('openstates_search_events', {
   title: 'Search Events',
   description:
-    'Search hearings, floor sessions, and committee meetings. jurisdiction is required — the Open States events endpoint has no all-states search, so scope every call to a single state; use openstates_list_jurisdictions to pick one. Experimental — most states do not publish event data to Open States. Use after and before to scope to a date range. Set require_bills=true to filter to events with bills on the agenda, which is the most useful filter for tracking legislation through committee. Use include=agenda,participants for full meeting context. Empty results often indicate the state lacks event data rather than no events occurring.',
+    'Search hearings, floor sessions, and committee meetings. jurisdiction is required — the Open States events endpoint has no all-states search, so scope every call to a single state; use openstates_list_jurisdictions to pick one. Experimental — most states do not publish event data to Open States. Use after and before to scope to a date range. Set require_bills=true to filter to events with bills on the agenda, which is the most useful filter for tracking legislation through committee. Use include=agenda,participants for full meeting context. Empty results from an unfiltered search often indicate the state lacks event data rather than no events occurring.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z.object({
     jurisdiction: z
@@ -125,35 +187,13 @@ export const searchEvents = tool('openstates_search_events', {
               .optional()
               .describe('Provenance sources when include=sources is requested.'),
             media: z
-              .array(
-                z
-                  .object({
-                    url: z.string().describe('Media URL.'),
-                    note: z
-                      .string()
-                      .describe(
-                        'Media description. Empty string when Open States recorded no description.',
-                      ),
-                  })
-                  .describe('Media link record.'),
-              )
+              .array(MediaRecord)
               .optional()
-              .describe('Media links when include=media is requested.'),
+              .describe('Recordings and other media when include=media is requested.'),
             documents: z
-              .array(
-                z
-                  .object({
-                    url: z.string().describe('Document URL.'),
-                    note: z
-                      .string()
-                      .describe(
-                        'Document description. Empty string when Open States recorded no description.',
-                      ),
-                  })
-                  .describe('Document link record.'),
-              )
+              .array(DocumentRecord)
               .optional()
-              .describe('Document links when include=documents is requested.'),
+              .describe('Attached documents when include=documents is requested.'),
             participants: z
               .array(
                 z
@@ -236,9 +276,12 @@ export const searchEvents = tool('openstates_search_events', {
       ),
   },
   enrichmentTrailer: {
+    // Caller-echoed values: JSON in a code span reads back exactly, with no escapes to copy along.
     appliedFilters: {
-      render: (v) => `Filters: ${JSON.stringify(v)}`,
+      render: (v) => `**appliedFilters:** ${markdown().inlineCode(JSON.stringify(v)).build()}`,
     },
+    // Server-authored prose; the framework default would render this string as a code span.
+    coverageNote: { render: (v) => `**coverageNote:** ${v}` },
   },
   errors: [
     {
@@ -257,6 +300,15 @@ export const searchEvents = tool('openstates_search_events', {
       when: 'Open States rejected the request as not found — page is past the last page for this query.',
       recovery:
         'Request a page within the max_page bound returned by a previous call; the error message names the valid range.',
+    },
+    {
+      reason: 'rate_limited',
+      code: JsonRpcErrorCode.RateLimited,
+      when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+      recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+      retryable: true,
+      // Raised by the service, which reads the cap from the 429 body or its own daily-budget guard.
+      thrownBy: 'service',
     },
   ],
 
@@ -307,8 +359,25 @@ export const searchEvents = tool('openstates_search_events', {
     });
 
     if (result.results.length === 0) {
+      const filters = [
+        ...(input.require_bills ? ['require_bills=true'] : []),
+        ...(['after', 'before'] as const).flatMap((key) =>
+          input[key] === undefined ? [] : [`${key}=${JSON.stringify(input[key])}`],
+        ),
+      ];
+      const widen = [
+        ...(input.require_bills ? ['without require_bills'] : []),
+        ...(input.after !== undefined || input.before !== undefined
+          ? ['with a wider after/before window']
+          : []),
+      ];
+      // A narrowing filter can empty the page of a state that does publish events, so the
+      // missing-data reading is offered only for an unfiltered search. A notice is authored
+      // Markdown, so the caller's filter values inside it are encoded.
       ctx.enrich.notice(
-        'No events found. Event coverage is experimental — most states do not publish event data to Open States. If you expected results, the state may lack event data entirely.',
+        filters.length > 0
+          ? `No events matched ${escapeMarkdownInline(filters.join(', '))}. The jurisdiction may still hold events outside these filters — repeat the search ${widen.join(' or ')} before concluding it lacks event data.`
+          : 'No events found. Event coverage is experimental — most states do not publish event data to Open States. If you expected results, the state may lack event data entirely.',
       );
     }
 
@@ -319,29 +388,42 @@ export const searchEvents = tool('openstates_search_events', {
     const lines: string[] = [
       `**${result.pagination.total_items} events** (page ${result.pagination.page}/${result.pagination.max_page}, per page ${result.pagination.per_page}, showing ${result.results.length})`,
     ];
+    const e = escapeMarkdownInline;
+    const linkLine = (label: string, items: { url: string; note: string }[] | undefined) => {
+      if (items?.length) {
+        lines.push(
+          `**${label}:** ${items.map((i) => markdownLink(i.note || i.url, i.url)).join(', ')}`,
+        );
+      }
+    };
+    // Records are `; `-separated: one record's links are already `, `-joined.
+    const attachmentLine = (label: string, records: z.infer<typeof MediaRecord>[] | undefined) => {
+      const rendered = (records ?? []).map(attachmentText).filter(Boolean);
+      if (rendered.length > 0) lines.push(`**${label}:** ${rendered.join('; ')}`);
+    };
     for (const event of result.results) {
       lines.push('');
-      lines.push(`## ${event.name}`);
-      lines.push(`**ID:** ${event.id}`);
-      lines.push(`**Classification:** ${event.classification} | **Status:** ${event.status}`);
+      lines.push(`## ${e(event.name)}`);
+      lines.push(`**ID:** ${e(event.id)}`);
+      lines.push(`**Classification:** ${e(event.classification)} | **Status:** ${e(event.status)}`);
       lines.push(
         event.end_date
-          ? `**Start:** ${event.start_date} | **End:** ${event.end_date}`
-          : `**Start:** ${event.start_date}`,
+          ? `**Start:** ${e(event.start_date)} | **End:** ${e(event.end_date)}`
+          : `**Start:** ${e(event.start_date)}`,
       );
-      lines.push(`**Jurisdiction:** ${event.jurisdiction.name} (${event.jurisdiction.id})`);
-      if (event.description) lines.push(event.description);
+      lines.push(`**Jurisdiction:** ${e(event.jurisdiction.name)} (${e(event.jurisdiction.id)})`);
+      if (event.description) lines.push(e(event.description));
       if (event.location) {
-        const locStr = event.location.url
-          ? `${event.location.name} — ${event.location.url}`
-          : event.location.name;
-        lines.push(`**Location:** ${locStr}`);
+        const { name, url } = event.location;
+        lines.push(`**Location:** ${url ? markdownLink(name || url, url) : e(name)}`);
       }
       if (event.participants?.length) {
         lines.push(
           `**Participants:** ${event.participants
             .map((p) =>
-              p.role ? `${p.name} (${p.role}, ${p.entity_type})` : `${p.name} (${p.entity_type})`,
+              p.role
+                ? `${e(p.name)} (${e(p.role)}, ${e(p.entity_type)})`
+                : `${e(p.name)} (${e(p.entity_type)})`,
             )
             .join(', ')}`,
         );
@@ -349,36 +431,22 @@ export const searchEvents = tool('openstates_search_events', {
       if (event.agenda?.length) {
         lines.push('**Agenda:**');
         for (const item of event.agenda) {
-          const cls = item.classification.length > 0 ? ` [${item.classification.join(', ')}]` : '';
-          const subj = item.subjects.length > 0 ? ` | Subjects: ${item.subjects.join(', ')}` : '';
-          lines.push(`- ${item.description}${cls}${subj}`);
+          const cls =
+            item.classification.length > 0 ? ` [${item.classification.map(e).join(', ')}]` : '';
+          const subj =
+            item.subjects.length > 0 ? ` | Subjects: ${item.subjects.map(e).join(', ')}` : '';
+          lines.push(`- ${e(item.description)}${cls}${subj}`);
           if (item.related_entities.length > 0) {
             lines.push(
-              `  Related: ${item.related_entities.map((e) => `${e.name} (${e.entity_type})`).join(', ')}`,
+              `  Related: ${item.related_entities.map((r) => `${e(r.name)} (${e(r.entity_type)})`).join(', ')}`,
             );
           }
         }
       }
-      if (event.links?.length) {
-        lines.push(
-          `**Links:** ${event.links.map((l) => (l.note ? `${l.note}: ${l.url}` : l.url)).join(', ')}`,
-        );
-      }
-      if (event.sources?.length) {
-        lines.push(
-          `**Sources:** ${event.sources.map((s) => (s.note ? `${s.url} (${s.note})` : s.url)).join(', ')}`,
-        );
-      }
-      if (event.media?.length) {
-        lines.push(
-          `**Media:** ${event.media.map((m) => (m.note ? `${m.note}: ${m.url}` : m.url)).join(', ')}`,
-        );
-      }
-      if (event.documents?.length) {
-        lines.push(
-          `**Documents:** ${event.documents.map((d) => (d.note ? `${d.note}: ${d.url}` : d.url)).join(', ')}`,
-        );
-      }
+      linkLine('Links', event.links);
+      linkLine('Sources', event.sources);
+      attachmentLine('Media', event.media);
+      attachmentLine('Documents', event.documents);
     }
     return [{ type: 'text', text: lines.join('\n') }];
   },

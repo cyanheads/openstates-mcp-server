@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const EventIncludeEnum = z.enum([
@@ -15,6 +16,67 @@ const EventIncludeEnum = z.enum([
   'participants',
   'agenda',
 ]);
+
+/** Open States `EventDocument` / `EventMedia` fields; the URLs sit in `links[]`, not on the record. */
+const attachmentFields = (noun: string) => ({
+  note: z
+    .string()
+    .describe(`${noun} description. Empty string when Open States recorded no description.`),
+  date: z.string().describe(`${noun} date. Empty string when Open States recorded no date.`),
+  classification: z
+    .string()
+    .describe(`${noun} classification. Empty string when Open States recorded none.`),
+  links: z
+    .array(
+      z
+        .object({
+          url: z.string().describe(`${noun} URL.`),
+          note: z
+            .string()
+            .optional()
+            .describe('Link description. Absent when Open States recorded none.'),
+        })
+        .describe(`One URL for this ${noun.toLowerCase()} record.`),
+    )
+    .describe(`URLs for this ${noun.toLowerCase()} record — usually one, occasionally none.`),
+});
+
+const MediaRecord = z
+  .object({
+    ...attachmentFields('Media'),
+    offset: z
+      .number()
+      .optional()
+      .describe(
+        'Start offset into the recording as Open States recorded it. Absent when not recorded.',
+      ),
+  })
+  .describe('Media record.');
+
+const DocumentRecord = z.object(attachmentFields('Document')).describe('Document record.');
+
+/**
+ * One media or document record as inline Markdown. Each URL is linked under its own note, else the
+ * record's note, else the URL itself; the record's note leads only when no link already carries it
+ * as a label; date, classification, and offset follow in parentheses when recorded. An entirely
+ * empty record renders as `''`.
+ */
+function attachmentText(record: z.infer<typeof MediaRecord>): string {
+  const e = escapeMarkdownInline;
+  const linked = record.links
+    .map((l) => markdownLink(l.note || record.note || l.url, l.url))
+    .join(', ');
+  const noteAsLabel = record.links.some((l) => !l.note);
+  const lead = record.note && !noteAsLabel ? e(record.note) : '';
+  const body = lead && linked ? `${lead}: ${linked}` : lead || linked;
+  const meta = [
+    record.date && e(record.date),
+    record.classification && e(record.classification),
+    record.offset !== undefined ? `offset ${record.offset}` : '',
+  ].filter(Boolean);
+  if (meta.length === 0) return body;
+  return body ? `${body} (${meta.join(', ')})` : `(${meta.join(', ')})`;
+}
 
 export const getEvent = tool('openstates_get_event', {
   title: 'Get Event',
@@ -65,35 +127,13 @@ export const getEvent = tool('openstates_get_event', {
       .optional()
       .describe('Event links when include=links is requested.'),
     media: z
-      .array(
-        z
-          .object({
-            url: z.string().describe('Media URL.'),
-            note: z
-              .string()
-              .describe(
-                'Media description. Empty string when Open States recorded no description.',
-              ),
-          })
-          .describe('Media link record.'),
-      )
+      .array(MediaRecord)
       .optional()
-      .describe('Media links when include=media is requested.'),
+      .describe('Recordings and other media when include=media is requested.'),
     documents: z
-      .array(
-        z
-          .object({
-            url: z.string().describe('Document URL.'),
-            note: z
-              .string()
-              .describe(
-                'Document description. Empty string when Open States recorded no description.',
-              ),
-          })
-          .describe('Document link record.'),
-      )
+      .array(DocumentRecord)
       .optional()
-      .describe('Document links when include=documents is requested.'),
+      .describe('Attached documents when include=documents is requested.'),
     sources: z
       .array(
         z
@@ -165,6 +205,15 @@ export const getEvent = tool('openstates_get_event', {
       // handler never sees the expiry it would need to throw on.
       thrownBy: 'service',
     },
+    {
+      reason: 'rate_limited',
+      code: JsonRpcErrorCode.RateLimited,
+      when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+      recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+      retryable: true,
+      // Raised by the service, which reads the cap from the 429 body or its own daily-budget guard.
+      thrownBy: 'service',
+    },
   ],
 
   async handler(input, ctx) {
@@ -229,28 +278,29 @@ export const getEvent = tool('openstates_get_event', {
   },
 
   format: (result) => {
+    const e = escapeMarkdownInline;
     const lines: string[] = [
-      `# ${result.name}`,
-      `**ID:** ${result.id}`,
-      `**Classification:** ${result.classification} | **Status:** ${result.status}`,
+      `# ${e(result.name)}`,
+      `**ID:** ${e(result.id)}`,
+      `**Classification:** ${e(result.classification)} | **Status:** ${e(result.status)}`,
       result.end_date
-        ? `**Start:** ${result.start_date} | **End:** ${result.end_date}`
-        : `**Start:** ${result.start_date}`,
-      `**Jurisdiction:** ${result.jurisdiction.name} (${result.jurisdiction.id})`,
+        ? `**Start:** ${e(result.start_date)} | **End:** ${e(result.end_date)}`
+        : `**Start:** ${e(result.start_date)}`,
+      `**Jurisdiction:** ${e(result.jurisdiction.name)} (${e(result.jurisdiction.id)})`,
     ];
-    if (result.description) lines.push(result.description);
+    if (result.description) lines.push(e(result.description));
     if (result.location) {
-      const locStr = result.location.url
-        ? `${result.location.name} — ${result.location.url}`
-        : result.location.name;
-      lines.push(`**Location:** ${locStr}`);
+      const { name, url } = result.location;
+      lines.push(`**Location:** ${url ? markdownLink(name || url, url) : e(name)}`);
     }
     if (result.participants?.length) {
       lines.push('');
       lines.push('## Participants');
       for (const p of result.participants) {
         lines.push(
-          p.role ? `- ${p.name} (${p.role}) — ${p.entity_type}` : `- ${p.name} — ${p.entity_type}`,
+          p.role
+            ? `- ${e(p.name)} (${e(p.role)}) — ${e(p.entity_type)}`
+            : `- ${e(p.name)} — ${e(p.entity_type)}`,
         );
       }
     }
@@ -258,37 +308,30 @@ export const getEvent = tool('openstates_get_event', {
       lines.push('');
       lines.push('## Agenda');
       for (const item of result.agenda) {
-        lines.push(`- ${item.description}`);
+        lines.push(`- ${e(item.description)}`);
         if (item.classification.length > 0)
-          lines.push(`  Classification: ${item.classification.join(', ')}`);
-        if (item.subjects.length > 0) lines.push(`  Subjects: ${item.subjects.join(', ')}`);
+          lines.push(`  Classification: ${item.classification.map(e).join(', ')}`);
+        if (item.subjects.length > 0) lines.push(`  Subjects: ${item.subjects.map(e).join(', ')}`);
         if (item.related_entities.length > 0) {
           lines.push(
-            `  Related: ${item.related_entities.map((e) => `${e.name} (${e.entity_type})`).join(', ')}`,
+            `  Related: ${item.related_entities.map((r) => `${e(r.name)} (${e(r.entity_type)})`).join(', ')}`,
           );
         }
       }
     }
-    if (result.links?.length) {
+    const list = (heading: string, items: string[]) => {
+      const rendered = items.filter(Boolean);
+      if (rendered.length === 0) return;
       lines.push('');
-      lines.push('## Links');
-      for (const l of result.links) lines.push(l.note ? `- ${l.note}: ${l.url}` : `- ${l.url}`);
-    }
-    if (result.media?.length) {
-      lines.push('');
-      lines.push('## Media');
-      for (const m of result.media) lines.push(m.note ? `- ${m.note}: ${m.url}` : `- ${m.url}`);
-    }
-    if (result.documents?.length) {
-      lines.push('');
-      lines.push('## Documents');
-      for (const d of result.documents) lines.push(d.note ? `- ${d.note}: ${d.url}` : `- ${d.url}`);
-    }
-    if (result.sources?.length) {
-      lines.push('');
-      lines.push('## Sources');
-      for (const s of result.sources) lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
-    }
+      lines.push(`## ${heading}`);
+      for (const item of rendered) lines.push(`- ${item}`);
+    };
+    const linkItems = (items: { url: string; note: string }[] | undefined) =>
+      (items ?? []).map((i) => markdownLink(i.note || i.url, i.url));
+    list('Links', linkItems(result.links));
+    list('Media', (result.media ?? []).map(attachmentText));
+    list('Documents', (result.documents ?? []).map(attachmentText));
+    list('Sources', linkItems(result.sources));
     return [{ type: 'text', text: lines.join('\n') }];
   },
 });

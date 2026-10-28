@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownImage, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const PersonIncludeEnum = z.enum([
@@ -37,15 +38,16 @@ function countTier(
 }
 
 /**
- * Human-readable tier for a jurisdiction classification. The two values this endpoint returns get
- * a plain-language label; anything else is rendered verbatim rather than guessed at or dropped, so
- * an unfamiliar level still reaches a `content[]`-only client. Undefined when upstream omits it.
+ * Human-readable tier for a jurisdiction classification, as Markdown. The two values this endpoint
+ * returns get a plain-language label; anything else is rendered verbatim (escaped, so it reads back
+ * as upstream sent it) rather than guessed at or dropped, so an unfamiliar level still reaches a
+ * `content[]`-only client. Undefined when upstream omits it.
  */
 function tierLabel(classification: string | undefined): string | undefined {
   if (classification === undefined) return;
   if (classification === FEDERAL_CLASSIFICATION) return 'federal (US Congress)';
   if (classification === STATE_CLASSIFICATION) return 'state legislature';
-  return classification;
+  return escapeMarkdownInline(classification);
 }
 
 export const getLegislatorsByLocation = tool('openstates_get_legislators_by_location', {
@@ -223,6 +225,15 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
       // handler never sees the expiry it would need to throw on.
       thrownBy: 'service',
     },
+    {
+      reason: 'rate_limited',
+      code: JsonRpcErrorCode.RateLimited,
+      when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+      recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+      retryable: true,
+      // Raised by the service, which reads the cap from the 429 body or its own daily-budget guard.
+      thrownBy: 'service',
+    },
   ],
 
   async handler(input, ctx) {
@@ -280,60 +291,74 @@ export const getLegislatorsByLocation = tool('openstates_get_legislators_by_loca
       stateCount > 0 && federalCount > 0
         ? ` — ${stateCount} state, ${federalCount} federal (US Congress)`
         : '';
+    /**
+     * Every upstream string goes through an encoder so a CommonMark parse reads it back as written:
+     * `escapeMarkdownInline` for text, `markdownLink` for a URL (labelled by its note, else by
+     * itself), and `markdownImage` for the headshot. A blank line opens each list section, since a
+     * label directly under a list is otherwise folded into the list's last item.
+     */
     const lines: string[] = [`**${result.legislators.length} legislators found**${breakdown}`];
     for (const person of result.legislators) {
       const tier = tierLabel(person.jurisdiction.classification);
       lines.push('');
-      lines.push(`## ${person.name}`);
-      lines.push(`**ID:** ${person.id}`);
-      lines.push(`**Given name:** ${person.given_name} | **Family name:** ${person.family_name}`);
-      lines.push(`**Party:** ${person.party || 'Not available'}`);
+      lines.push(`## ${escapeMarkdownInline(person.name)}`);
+      lines.push(`**ID:** ${escapeMarkdownInline(person.id)}`);
       lines.push(
-        `**Jurisdiction:** ${person.jurisdiction.name} (${person.jurisdiction.id})${tier ? ` — ${tier}` : ''}`,
+        `**Given name:** ${escapeMarkdownInline(person.given_name)} | **Family name:** ${escapeMarkdownInline(person.family_name)}`,
+      );
+      lines.push(
+        `**Party:** ${person.party ? escapeMarkdownInline(person.party) : 'Not available'}`,
+      );
+      lines.push(
+        `**Jurisdiction:** ${escapeMarkdownInline(person.jurisdiction.name)} (${escapeMarkdownInline(person.jurisdiction.id)})${tier ? ` — ${tier}` : ''}`,
       );
       if (person.current_role) {
-        const district = person.current_role.district
-          ? ` — District ${person.current_role.district}`
-          : '';
+        const role = person.current_role;
+        const district = role.district ? ` — District ${escapeMarkdownInline(role.district)}` : '';
         lines.push(
-          `**Role:** ${person.current_role.title} (${person.current_role.org_classification})${district}`,
+          `**Role:** ${escapeMarkdownInline(role.title)} (${escapeMarkdownInline(role.org_classification)})${district}`,
         );
-        if (person.current_role.division_id)
-          lines.push(`**Division:** ${person.current_role.division_id}`);
+        if (role.division_id) lines.push(`**Division:** ${escapeMarkdownInline(role.division_id)}`);
       }
-      if (person.email) lines.push(`**Email:** ${person.email}`);
-      if (person.openstates_url) lines.push(`**URL:** ${person.openstates_url}`);
-      if (person.image) lines.push(`**Photo:** ${person.image}`);
+      if (person.email) lines.push(`**Email:** ${escapeMarkdownInline(person.email)}`);
+      if (person.openstates_url)
+        lines.push(`**URL:** ${markdownLink(person.openstates_url, person.openstates_url)}`);
+      if (person.image) lines.push(`**Photo:** ${markdownImage(person.name, person.image)}`);
       if (person.offices?.length) {
         for (const office of person.offices) {
-          const parts: string[] = [`${office.name} [${office.classification}]`];
-          if (office.voice) parts.push(`Phone: ${office.voice}`);
-          if (office.fax) parts.push(`Fax: ${office.fax}`);
-          if (office.address) parts.push(`Address: ${office.address}`);
+          const parts: string[] = [
+            `${escapeMarkdownInline(office.name)} [${escapeMarkdownInline(office.classification)}]`,
+          ];
+          if (office.voice) parts.push(`Phone: ${escapeMarkdownInline(office.voice)}`);
+          if (office.fax) parts.push(`Fax: ${escapeMarkdownInline(office.fax)}`);
+          if (office.address) parts.push(`Address: ${escapeMarkdownInline(office.address)}`);
           lines.push(`**Office:** ${parts.join(' | ')}`);
         }
       }
       if (person.links?.length) {
         lines.push(
-          `**Links:** ${person.links.map((l) => (l.note ? `${l.note}: ${l.url}` : l.url)).join(', ')}`,
+          `**Links:** ${person.links.map((l) => markdownLink(l.note || l.url, l.url)).join(', ')}`,
         );
       }
       if (person.other_names?.length) {
-        lines.push('**Other names:**');
+        lines.push('', '**Other names:**');
         for (const n of person.other_names) {
-          lines.push(`- ${n.name}${n.note ? ` _(${n.note})_` : ''}`);
+          const note = n.note ? ` _(${escapeMarkdownInline(n.note)})_` : '';
+          lines.push(`- ${escapeMarkdownInline(n.name)}${note}`);
         }
       }
       if (person.other_identifiers?.length) {
-        lines.push('**Other identifiers:**');
+        lines.push('', '**Other identifiers:**');
         for (const oi of person.other_identifiers) {
-          lines.push(`- ${oi.identifier} (${oi.scheme})`);
+          lines.push(
+            `- ${escapeMarkdownInline(oi.identifier)} (${escapeMarkdownInline(oi.scheme)})`,
+          );
         }
       }
       if (person.sources?.length) {
-        lines.push('**Sources:**');
+        lines.push('', '**Sources:**');
         for (const s of person.sources) {
-          lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
+          lines.push(`- ${markdownLink(s.note || s.url, s.url)}`);
         }
       }
     }

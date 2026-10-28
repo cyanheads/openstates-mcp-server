@@ -5,8 +5,26 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline as esc, markdown, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { isKnownJurisdiction } from '@/services/openstates/jurisdiction-inventory.js';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
+
+/**
+ * One bill version or document line: the id in literal brackets, the note and date when present,
+ * then each link labeled by its media type. The brackets are escaped because with no note or date
+ * the line reads `[id]: <link>`, which CommonMark takes as a link reference definition and drops.
+ */
+function textRecordLine(record: {
+  id: string;
+  note: string;
+  date: string;
+  links: { url: string; media_type: string }[];
+}): string {
+  const links = record.links.map((l) => markdownLink(l.media_type || l.url, l.url)).join(', ');
+  const note = record.note ? ` ${esc(record.note)}` : '';
+  const date = record.date ? ` (${esc(record.date)})` : '';
+  return `- \\[${esc(record.id)}\\]${note}${date}: ${links}`;
+}
 
 const BillIncludeEnum = z.enum([
   'sponsorships',
@@ -468,9 +486,10 @@ export const searchBills = tool('openstates_search_bills', {
         'Filters applied to this query as the server received them, for agent self-verification of zero or unexpected results.',
       ),
   },
+  // Caller-echoed values: JSON in a code span reads back exactly, with no escapes to copy along.
   enrichmentTrailer: {
     appliedFilters: {
-      render: (v) => `Filters: ${JSON.stringify(v)}`,
+      render: (v) => `**appliedFilters:** ${markdown().inlineCode(JSON.stringify(v)).build()}`,
     },
   },
   errors: [
@@ -490,6 +509,15 @@ export const searchBills = tool('openstates_search_bills', {
       when: 'Open States rejected the request as not found — page is past the last page for this query.',
       recovery:
         'Request a page within the max_page bound returned by a previous call; the error message names the valid range.',
+    },
+    {
+      reason: 'rate_limited',
+      code: JsonRpcErrorCode.RateLimited,
+      when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+      recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+      retryable: true,
+      // Raised by the service, which reads the cap from the 429 body or its own daily-budget guard.
+      thrownBy: 'service',
     },
   ],
 
@@ -576,62 +604,71 @@ export const searchBills = tool('openstates_search_bills', {
                 ? ' If the session filter is the likely cause, use openstates_get_jurisdiction with include=legislative_sessions to list valid session identifiers for this jurisdiction.'
                 : ''
             }`;
-      ctx.enrich.notice(`No bills matched ${filters.join(', ')}. ${hint}`);
+      // A notice is authored Markdown, so the caller's filter values inside it are encoded.
+      ctx.enrich.notice(`No bills matched ${esc(filters.join(', '))}. ${hint}`);
     }
 
     return { results: result.results, pagination: result.pagination };
   },
 
+  /**
+   * Every upstream string goes through `esc` (`escapeMarkdownInline`) and every URL field through
+   * `markdownLink`, labeled by the record's own note or media type when it has one, so a
+   * CommonMark parse of `content[]` reads back the values `structuredContent` carries.
+   */
   format: (result) => {
     const lines: string[] = [
       `**${result.pagination.total_items} bills** (page ${result.pagination.page}/${result.pagination.max_page}, per page ${result.pagination.per_page}, showing ${result.results.length})`,
     ];
     for (const bill of result.results) {
       lines.push('');
-      lines.push(`## ${bill.identifier} — ${bill.title}`);
-      lines.push(`**ID:** ${bill.id}`);
+      lines.push(`## ${esc(bill.identifier)} — ${esc(bill.title)}`);
+      lines.push(`**ID:** ${esc(bill.id)}`);
       lines.push(
-        `**Session:** ${bill.session} | **Jurisdiction:** ${bill.jurisdiction.name} (${bill.jurisdiction.id})`,
+        `**Session:** ${esc(bill.session)} | **Jurisdiction:** ${esc(bill.jurisdiction.name)} (${esc(bill.jurisdiction.id)})`,
       );
       lines.push(
-        `**Chamber:** ${bill.from_organization.name} (${bill.from_organization.classification})`,
+        `**Chamber:** ${esc(bill.from_organization.name)} (${esc(bill.from_organization.classification)})`,
       );
       if (bill.classification.length > 0)
-        lines.push(`**Classification:** ${bill.classification.join(', ')}`);
-      if (bill.subject.length > 0) lines.push(`**Subjects:** ${bill.subject.join(', ')}`);
-      if (bill.first_action_date) lines.push(`**First action:** ${bill.first_action_date}`);
+        lines.push(`**Classification:** ${bill.classification.map(esc).join(', ')}`);
+      if (bill.subject.length > 0) lines.push(`**Subjects:** ${bill.subject.map(esc).join(', ')}`);
+      if (bill.first_action_date) lines.push(`**First action:** ${esc(bill.first_action_date)}`);
       if (bill.latest_action_date) {
-        lines.push(
-          `**Latest action:** ${bill.latest_action_date} — ${bill.latest_action_description ?? 'N/A'}`,
-        );
+        const description =
+          bill.latest_action_description === null ? 'N/A' : esc(bill.latest_action_description);
+        lines.push(`**Latest action:** ${esc(bill.latest_action_date)} — ${description}`);
       }
-      if (bill.latest_passage_date) lines.push(`**Passed:** ${bill.latest_passage_date}`);
-      if (bill.updated_at) lines.push(`**Updated:** ${bill.updated_at}`);
-      if (bill.openstates_url) lines.push(`**URL:** ${bill.openstates_url}`);
+      if (bill.latest_passage_date) lines.push(`**Passed:** ${esc(bill.latest_passage_date)}`);
+      if (bill.updated_at) lines.push(`**Updated:** ${esc(bill.updated_at)}`);
+      if (bill.openstates_url) {
+        lines.push(`**URL:** ${markdownLink(bill.openstates_url, bill.openstates_url)}`);
+      }
       if (bill.sponsorships?.length) {
         lines.push('');
         lines.push('**Sponsors:**');
         for (const s of bill.sponsorships) {
           const primary = s.primary ? '**Primary**' : 'Cosponsor';
-          const person = s.person ? ` [person: ${s.person.name} (${s.person.id})]` : '';
+          const person = s.person ? ` [person: ${esc(s.person.name)} (${esc(s.person.id)})]` : '';
           lines.push(
-            `- ${primary}: ${s.name} (${s.classification}, entity: ${s.entity_type})${person}`,
+            `- ${primary}: ${esc(s.name)} (${esc(s.classification)}, entity: ${esc(s.entity_type)})${person}`,
           );
         }
       }
       if (bill.abstracts?.length) {
         lines.push('');
         for (const abs of bill.abstracts) {
-          lines.push(`*${abs.abstract}*${abs.note ? ` _(${abs.note})_` : ''}`);
+          lines.push(`*${esc(abs.abstract)}*${abs.note ? ` _(${esc(abs.note)})_` : ''}`);
         }
       }
       if (bill.actions?.length) {
         lines.push('');
         lines.push('**Actions:**');
         for (const a of bill.actions) {
-          const cls = a.classification.length > 0 ? ` [${a.classification.join(', ')}]` : '';
+          const cls =
+            a.classification.length > 0 ? ` [${a.classification.map(esc).join(', ')}]` : '';
           lines.push(
-            `- #${a.order}${a.date ? ` ${a.date}` : ''}: ${a.description}${cls} — ${a.organization.name} (${a.organization.classification})`,
+            `- #${a.order}${a.date ? ` ${esc(a.date)}` : ''}: ${esc(a.description)}${cls} — ${esc(a.organization.name)} (${esc(a.organization.classification)})`,
           );
         }
       }
@@ -639,29 +676,33 @@ export const searchBills = tool('openstates_search_bills', {
         lines.push('');
         lines.push('**Other titles:**');
         for (const t of bill.other_titles) {
-          lines.push(`- ${t.title}${t.note ? ` _(${t.note})_` : ''}`);
+          lines.push(`- ${esc(t.title)}${t.note ? ` _(${esc(t.note)})_` : ''}`);
         }
       }
       if (bill.other_identifiers?.length) {
         lines.push('');
         lines.push('**Other identifiers:**');
         for (const oi of bill.other_identifiers) {
-          lines.push(`- ${oi.identifier}${oi.scheme ? ` (${oi.scheme})` : ''}`);
+          lines.push(`- ${esc(oi.identifier)}${oi.scheme ? ` (${esc(oi.scheme)})` : ''}`);
         }
       }
       if (bill.votes?.length) {
         lines.push('');
         lines.push('**Votes:**');
         for (const v of bill.votes) {
-          lines.push(`### ${v.motion_text}${v.start_date ? ` (${v.start_date})` : ''}`);
-          lines.push(`**Result:** ${v.result} | **ID:** ${v.id} | **Identifier:** ${v.identifier}`);
-          const counts = v.counts.map((c) => `${c.option}: ${c.value}`).join(', ');
+          lines.push(`### ${esc(v.motion_text)}${v.start_date ? ` (${esc(v.start_date)})` : ''}`);
+          lines.push(
+            `**Result:** ${esc(v.result)} | **ID:** ${esc(v.id)} | **Identifier:** ${esc(v.identifier)}`,
+          );
+          const counts = v.counts.map((c) => `${esc(c.option)}: ${c.value}`).join(', ');
           lines.push(`**Tally:** ${counts}`);
           if (v.votes.length > 0) {
             lines.push('**Individual votes:**');
             for (const pv of v.votes) {
-              const voterLink = pv.voter ? ` (ID: ${pv.voter.id}, name: ${pv.voter.name})` : '';
-              lines.push(`- ${pv.voter_name}${voterLink}: ${pv.option}`);
+              const voterLink = pv.voter
+                ? ` (ID: ${esc(pv.voter.id)}, name: ${esc(pv.voter.name)})`
+                : '';
+              lines.push(`- ${esc(pv.voter_name)}${voterLink}: ${esc(pv.option)}`);
             }
           }
         }
@@ -669,34 +710,26 @@ export const searchBills = tool('openstates_search_bills', {
       if (bill.versions?.length) {
         lines.push('');
         lines.push('**Bill Text Versions:**');
-        for (const v of bill.versions) {
-          lines.push(
-            `- [${v.id}]${v.note ? ` ${v.note}` : ''}${v.date ? ` (${v.date})` : ''}: ${v.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
-          );
-        }
+        for (const v of bill.versions) lines.push(textRecordLine(v));
       }
       if (bill.documents?.length) {
         lines.push('');
         lines.push('**Documents:**');
-        for (const d of bill.documents) {
-          lines.push(
-            `- [${d.id}]${d.note ? ` ${d.note}` : ''}${d.date ? ` (${d.date})` : ''}: ${d.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
-          );
-        }
+        for (const d of bill.documents) lines.push(textRecordLine(d));
       }
       if (bill.related_bills?.length) {
         lines.push('');
         lines.push('**Related Bills:**');
         for (const r of bill.related_bills) {
-          lines.push(`- ${r.identifier} (${r.legislative_session}) — ${r.relation_type}`);
+          lines.push(
+            `- ${esc(r.identifier)} (${esc(r.legislative_session)}) — ${esc(r.relation_type)}`,
+          );
         }
       }
       if (bill.sources?.length) {
         lines.push('');
         lines.push('**Sources:**');
-        for (const s of bill.sources) {
-          lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
-        }
+        for (const s of bill.sources) lines.push(`- ${markdownLink(s.note || s.url, s.url)}`);
       }
     }
     return [{ type: 'text', text: lines.join('\n') }];

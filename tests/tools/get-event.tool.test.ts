@@ -3,7 +3,8 @@
  * @module tests/tools/get-event.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getEvent } from '@/mcp-server/tools/definitions/get-event.tool.js';
 
@@ -139,5 +140,76 @@ describe('getEvent', () => {
     const text = (blocks[0]! as { text: string }).text;
     // Should not throw, no location line expected
     expect(text).toContain('ocd-event/evt-1');
+  });
+
+  /**
+   * #59: Open States sends media and documents as `EventMedia` / `EventDocument` records whose URLs
+   * sit in `links[]` — no top-level `url`. The fixture is the live Georgia shape. Pre-fix the output
+   * schema demanded a top-level `url`, so the lookup failed validation with -32603.
+   */
+  it('returns an event carrying upstream-shaped media and documents (#59)', async () => {
+    const media = [
+      {
+        note: 'Livestream',
+        date: '',
+        classification: '',
+        offset: 30,
+        links: [
+          { url: 'https://vimeo.example.com/showcase/11368491' },
+          { url: 'https://vimeo.example.com/showcase/11368491.m3u8', note: 'HLS' },
+        ],
+      },
+    ];
+    const documents = [
+      {
+        note: 'Agenda',
+        date: '2025-03-14',
+        classification: 'agenda',
+        links: [{ url: 'https://legis.example.gov/agendas/agenda.pdf' }],
+      },
+    ];
+    mockService.getEvent.mockResolvedValue({ ...mockEvent, media, documents });
+
+    const result = await runToolContract(getEvent, {
+      event_id: 'ocd-event/evt-1',
+      include: ['media', 'documents'],
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ media, documents });
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain(
+      '## Media\n- [Livestream](<https://vimeo.example.com/showcase/11368491>), [HLS](<https://vimeo.example.com/showcase/11368491.m3u8>) (offset 30)\n\n## Documents\n- [Agenda](<https://legis.example.gov/agendas/agenda.pdf>) (2025-03-14, agenda)',
+    );
+  });
+
+  /** #51: the service's `rate_limited` error reaches the caller with the declared recovery. */
+  it('surfaces a service rate_limited error with the declared recovery hint', async () => {
+    mockService.getEvent.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.RateLimited, 'exceeded limit of 10/min: 11', {
+        reason: 'rate_limited',
+        retryable: true,
+        retryAfter: 42,
+      }),
+    );
+
+    const result = await runToolContract(getEvent, { event_id: 'ocd-event/evt-1' });
+
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: JsonRpcErrorCode.RateLimited,
+          data: {
+            reason: 'rate_limited',
+            retryable: true,
+            retryAfter: 42,
+            recovery: {
+              hint: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+            },
+          },
+        },
+      },
+    });
   });
 });

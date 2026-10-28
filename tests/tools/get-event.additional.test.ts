@@ -8,6 +8,8 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getEvent } from '@/mcp-server/tools/definitions/get-event.tool.js';
+import { inlineTypes, links, normalizeLink, readBack } from '../helpers/commonmark.js';
+import { AUTHORED_INLINE, HOSTILE, leaves, withLeaf } from '../helpers/markdown-sweep.js';
 
 vi.mock('@/services/openstates/openstates-service.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/openstates/openstates-service.js')>()),
@@ -137,19 +139,33 @@ describe('getEvent — handler result shape', () => {
   it('includes media when service returns it', async () => {
     mockService.getEvent.mockResolvedValue({
       ...baseEvent,
-      media: [{ note: 'Video recording', url: 'https://tvw.org/video/12345' }],
+      media: [
+        {
+          note: 'Video recording',
+          date: '',
+          classification: '',
+          links: [{ url: 'https://tvw.org/video/12345' }],
+        },
+      ],
     });
     const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: ['media'] });
     const result = await getEvent.handler(input, ctx);
     expect(result.media).toBeDefined();
-    expect(result.media?.[0]?.url).toBe('https://tvw.org/video/12345');
+    expect(result.media?.[0]?.links[0]?.url).toBe('https://tvw.org/video/12345');
   });
 
   it('includes documents when service returns them', async () => {
     mockService.getEvent.mockResolvedValue({
       ...baseEvent,
-      documents: [{ note: 'Fiscal note', url: 'https://leg.wa.gov/fiscal.pdf' }],
+      documents: [
+        {
+          note: 'Fiscal note',
+          date: '',
+          classification: '',
+          links: [{ url: 'https://leg.wa.gov/fiscal.pdf' }],
+        },
+      ],
     });
     const ctx = createMockContext({ errors: getEvent.errors });
     const input = getEvent.input.parse({ event_id: 'ocd-event/evt-1', include: ['documents'] });
@@ -167,9 +183,19 @@ describe('getEvent — format', () => {
     };
     const blocks = getEvent.format!(result);
     const text = (blocks[0]! as { text: string }).text;
-    expect(text).toContain('Committee Room A');
-    expect(text).toContain('https://leg.wa.gov/room-a');
-    expect(text).toContain('Location:');
+    expect(readBack(text)[1]).toMatch(/\nLocation: Committee Room A$/);
+    expect(links(text)).toEqual([{ href: 'https://leg.wa.gov/room-a', label: 'Committee Room A' }]);
+  });
+
+  it('labels a location link with its URL when the location has no name', () => {
+    const blocks = getEvent.format!({
+      ...baseEvent,
+      location: { name: '', url: 'https://leg.wa.gov/room-a' },
+    });
+    const text = (blocks[0]! as { text: string }).text;
+    expect(links(text)).toEqual([
+      { href: 'https://leg.wa.gov/room-a', label: 'https://leg.wa.gov/room-a' },
+    ]);
   });
 
   it('formats location without url', () => {
@@ -192,33 +218,44 @@ describe('getEvent — format', () => {
     };
     const blocks = getEvent.format!(result);
     const text = (blocks[0]! as { text: string }).text;
-    expect(text).toContain('Links');
-    expect(text).toContain('Agenda');
-    expect(text).toContain('https://leg.wa.gov/agenda.pdf');
+    expect(readBack(text)).toContain('Links');
+    expect(links(text)).toEqual([{ href: 'https://leg.wa.gov/agenda.pdf', label: 'Agenda' }]);
   });
 
   it('formats media when present', () => {
     const result = {
       ...baseEvent,
-      media: [{ note: 'Video', url: 'https://tvw.org/video/99' }],
+      media: [
+        {
+          note: 'Video',
+          date: '',
+          classification: '',
+          links: [{ url: 'https://tvw.org/video/99' }],
+        },
+      ],
     };
     const blocks = getEvent.format!(result);
     const text = (blocks[0]! as { text: string }).text;
-    expect(text).toContain('Media');
-    expect(text).toContain('Video');
-    expect(text).toContain('https://tvw.org/video/99');
+    expect(readBack(text)).toContain('Media');
+    expect(links(text)).toEqual([{ href: 'https://tvw.org/video/99', label: 'Video' }]);
   });
 
   it('formats documents when present', () => {
     const result = {
       ...baseEvent,
-      documents: [{ note: 'Fiscal Note', url: 'https://leg.wa.gov/fiscal.pdf' }],
+      documents: [
+        {
+          note: 'Fiscal Note',
+          date: '',
+          classification: '',
+          links: [{ url: 'https://leg.wa.gov/fiscal.pdf' }],
+        },
+      ],
     };
     const blocks = getEvent.format!(result);
     const text = (blocks[0]! as { text: string }).text;
-    expect(text).toContain('Documents');
-    expect(text).toContain('Fiscal Note');
-    expect(text).toContain('https://leg.wa.gov/fiscal.pdf');
+    expect(readBack(text)).toContain('Documents');
+    expect(links(text)).toEqual([{ href: 'https://leg.wa.gov/fiscal.pdf', label: 'Fiscal Note' }]);
   });
 
   it('formats start date without end_date when end_date is absent', () => {
@@ -281,9 +318,10 @@ describe('getEvent — sources include surfacing (issue #18)', () => {
   it('renders sources in format() text', () => {
     const blocks = getEvent.format!(enrichedEvent);
     const text = (blocks[0]! as { text: string }).text;
-    expect(text).toContain('Sources');
-    expect(text).toContain('https://leg.ca.gov/event-source');
-    expect(text).toContain('official calendar');
+    expect(readBack(text)).toContain('Sources');
+    expect(links(text)).toEqual([
+      { href: 'https://leg.ca.gov/event-source', label: 'official calendar' },
+    ]);
   });
 });
 
@@ -331,8 +369,8 @@ describe('getEvent — participant without upstream role (issue #19)', () => {
 });
 
 /**
- * Links, media, and documents all render one-per-line as `- ${note}: ${url}`. Open States often
- * supplies an empty `note`, which put a dangling separator in front of every URL on the
+ * Links, media, and documents all render one-per-line, each URL labeled by its note. Open States
+ * often supplies an empty `note`, which put a dangling separator in front of every URL on the
  * `content[]` path. `structuredContent` keeps `note: ""` — it is the accurate upstream value.
  */
 describe('getEvent — link, media, and document rendering with an empty note', () => {
@@ -340,27 +378,174 @@ describe('getEvent — link, media, and document rendering with an empty note', 
     (getEvent.format!({ ...baseEvent, ...event })[0]! as { text: string }).text;
 
   it('renders each URL alone when the note is empty', () => {
+    const urls = [
+      'https://leg.example.gov/hearing',
+      'https://tvw.example.org/clip',
+      'https://leg.example.gov/agenda.pdf',
+      'https://leg.example.gov/src',
+    ];
     const text = render({
-      links: [{ url: 'https://leg.example.gov/hearing', note: '' }],
-      media: [{ url: 'https://tvw.example.org/clip', note: '' }],
-      documents: [{ url: 'https://leg.example.gov/agenda.pdf', note: '' }],
+      links: [{ url: urls[0], note: '' }],
+      media: [{ note: '', date: '', classification: '', links: [{ url: urls[1] }] }],
+      documents: [{ note: '', date: '', classification: '', links: [{ url: urls[2] }] }],
+      sources: [{ url: urls[3], note: '' }],
     });
-    expect(text).toContain('- https://leg.example.gov/hearing');
-    expect(text).toContain('- https://tvw.example.org/clip');
-    expect(text).toContain('- https://leg.example.gov/agenda.pdf');
-    expect(text).not.toContain(': https://leg.example.gov/hearing');
-    expect(text).not.toContain(': https://tvw.example.org/clip');
-    expect(text).not.toContain(': https://leg.example.gov/agenda.pdf');
+    for (const url of urls) expect(readBack(text)).toContain(url);
+    expect(links(text)).toEqual(urls.map((url) => ({ href: url, label: url })));
+    expect(inlineTypes(text).has('em_open')).toBe(false);
   });
 
   it('still labels each list when the note is present', () => {
     const text = render({
       links: [{ url: 'https://leg.example.gov/hearing', note: 'hearing notice' }],
-      media: [{ url: 'https://tvw.example.org/clip', note: 'video' }],
-      documents: [{ url: 'https://leg.example.gov/agenda.pdf', note: 'agenda' }],
+      media: [
+        {
+          note: 'video',
+          date: '',
+          classification: '',
+          links: [{ url: 'https://tvw.example.org/clip' }],
+        },
+      ],
+      documents: [
+        {
+          note: 'agenda',
+          date: '',
+          classification: '',
+          links: [{ url: 'https://leg.example.gov/agenda.pdf' }],
+        },
+      ],
     });
-    expect(text).toContain('- hearing notice: https://leg.example.gov/hearing');
-    expect(text).toContain('- video: https://tvw.example.org/clip');
-    expect(text).toContain('- agenda: https://leg.example.gov/agenda.pdf');
+    expect(links(text)).toEqual([
+      { href: 'https://leg.example.gov/hearing', label: 'hearing notice' },
+      { href: 'https://tvw.example.org/clip', label: 'video' },
+      { href: 'https://leg.example.gov/agenda.pdf', label: 'agenda' },
+    ]);
+  });
+});
+
+/**
+ * Markdown fidelity (#53): every upstream string `format()` renders reads back exactly from a
+ * CommonMark parse, and every URL field renders as one link. The sweep sets one string leaf of a
+ * fully populated record at a time to each hostile class and checks the whole rendered document.
+ */
+describe('getEvent — Markdown fidelity (#53)', () => {
+  const full = {
+    ...baseEvent,
+    location: { name: 'Senate Hearing Room 1', url: 'https://leg.example.gov/room' },
+    links: [{ url: 'https://leg.example.gov/link', note: 'hearing notice' }],
+    // Media exercises the record note standing in as a link label; documents, a lead note
+    // before links that carry their own (#59).
+    media: [
+      {
+        note: 'video',
+        date: '2025-03-15',
+        classification: 'recording',
+        offset: 30,
+        links: [
+          { url: 'https://tvw.example.org/clip', note: 'MP4' },
+          { url: 'https://tvw.example.org/clip-2' },
+        ],
+      },
+    ],
+    documents: [
+      {
+        note: 'agenda',
+        date: '2025-03-14',
+        classification: 'agenda',
+        links: [{ url: 'https://leg.example.gov/agenda.pdf', note: 'PDF' }],
+      },
+    ],
+    sources: [{ url: 'https://leg.example.gov/src', note: 'official calendar' }],
+    participants: [
+      { name: 'Committee on Transportation', entity_type: 'organization', role: 'host' },
+    ],
+    agenda: [
+      {
+        description: 'HB 1000 hearing',
+        classification: ['bill'],
+        subjects: ['public safety'],
+        related_entities: [{ name: 'HB 1000', entity_type: 'bill' }],
+      },
+    ],
+  };
+  const fullHrefs = [
+    'https://leg.example.gov/room',
+    'https://leg.example.gov/link',
+    'https://tvw.example.org/clip',
+    'https://tvw.example.org/clip-2',
+    'https://leg.example.gov/agenda.pdf',
+    'https://leg.example.gov/src',
+  ];
+  const render = (event: unknown) =>
+    (getEvent.format!(getEvent.output.parse(event))[0]! as { text: string }).text;
+
+  it.each(Object.entries(HOSTILE))('reads back %s in every rendered string field', (_, payload) => {
+    const fields = leaves(full, false);
+    expect(fields).toHaveLength(28);
+    for (const path of fields) {
+      // A line break cannot ride an ATX heading — out of scope for heading-slot values.
+      if (path[0] === 'name' && payload.includes('\n')) continue;
+      const text = render(withLeaf(full, path, payload));
+      const where = path.join('.');
+      expect(readBack(text).join('\n'), where).toContain(payload);
+      expect(
+        links(text).map((l) => l.href),
+        where,
+      ).toEqual(fullHrefs);
+      expect(
+        [...inlineTypes(text)].filter((t) => !AUTHORED_INLINE.has(t)),
+        where,
+      ).toEqual([]);
+    }
+  });
+
+  it.each([
+    'https://leg.example.gov/a b',
+    'https://leg.example.gov/p_(x)*y*',
+    'https://leg.example.gov/q?a=<1>&b=[2]',
+    'https://leg.example.gov/r?x=1&amp;y=2',
+  ])('renders each URL field as one link to %s', (url) => {
+    const fields = leaves(full, true);
+    expect(fields).toHaveLength(6);
+    for (const path of fields) {
+      const found = links(render(withLeaf(full, path, url)));
+      expect(found, path.join('.')).toHaveLength(6);
+      expect(
+        found.filter((l) => l.href === normalizeLink(url)),
+        path.join('.'),
+      ).toHaveLength(1);
+    }
+  });
+
+  it('renders a non-http(s) URL as literal text with no link token', () => {
+    for (const path of leaves(full, true)) {
+      const text = render(withLeaf(full, path, 'javascript:alert(1)'));
+      expect(links(text), path.join('.')).toHaveLength(5);
+      expect(readBack(text).join('\n'), path.join('.')).toContain('javascript:alert(1)');
+    }
+  });
+
+  /** Real-shaped values pass through the encoders unchanged — pinned against the pre-#53 text. */
+  it('renders real-shaped identifiers byte-identical', () => {
+    expect(
+      render({
+        ...baseEvent,
+        id: 'ocd-event/2f3e4d5c-6b7a-8c9d-0e1f-2a3b4c5d6e7f',
+        start_date: '2025-03-15T09:00:00+00:00',
+        end_date: '2025-03-15T12:00:00Z',
+        location: { name: 'Senate Hearing Room 1' },
+        participants: [...full.participants, { name: 'Jane Doe', entity_type: 'person' }],
+        agenda: [
+          {
+            description: 'HB 1000',
+            classification: ['bill', 'hearing'],
+            subjects: ['public safety'],
+            related_entities: [{ name: 'HB 1000', entity_type: 'bill' }],
+          },
+        ],
+      }),
+    ).toBe(
+      '# Transportation Committee Hearing\n**ID:** ocd-event/2f3e4d5c-6b7a-8c9d-0e1f-2a3b4c5d6e7f\n**Classification:** committee-meeting | **Status:** passed\n**Start:** 2025-03-15T09:00:00+00:00 | **End:** 2025-03-15T12:00:00Z\n**Jurisdiction:** Washington (ocd-jurisdiction/country:us/state:wa/government)\nPublic hearing on HB 1000\n**Location:** Senate Hearing Room 1\n\n## Participants\n- Committee on Transportation (host) — organization\n- Jane Doe — person\n\n## Agenda\n- HB 1000\n  Classification: bill, hearing\n  Subjects: public safety\n  Related: HB 1000 (bill)',
+    );
   });
 });

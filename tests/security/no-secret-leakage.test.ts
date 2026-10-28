@@ -109,7 +109,9 @@ describe('no API key leakage in tool output', () => {
 
   it('getBill result does not contain the API key', async () => {
     const ctx = createMockContext({ errors: getBill.errors });
-    const input = getBill.input.parse({ openstates_id: 'ocd-bill/99999' });
+    const input = getBill.input.parse({
+      openstates_id: 'ocd-bill/4f255ccf-42a6-46ad-bbc6-0b027ebb15f2',
+    });
     const result = await getBill.handler(input, ctx);
     assertNoSecretIn(result, 'getBill result');
     const blocks = getBill.format!(result);
@@ -221,9 +223,12 @@ describe('injection attempts in path-based lookups do not crash', () => {
     await expect(getBill.handler(input, ctx)).resolves.toBeDefined();
   });
 
-  it('getBill with null bytes in openstates_id does not crash', async () => {
+  it('getBill with null bytes in openstates_id is rejected locally', async () => {
     const ctx = createMockContext({ errors: getBill.errors });
     const input = getBill.input.parse({ openstates_id: 'ocd-bill/\x00injected' });
-    await expect(getBill.handler(input, ctx)).resolves.toBeDefined();
+    await expect(getBill.handler(input, ctx)).rejects.toMatchObject({
+      data: { reason: 'invalid_openstates_id' },
+    });
+    expect(mockSvc.getBillById).not.toHaveBeenCalled();
   });
 });

@@ -4,7 +4,8 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchPeople } from '@/mcp-server/tools/definitions/search-people.tool.js';
 
@@ -318,6 +319,38 @@ describe('searchPeople', () => {
       district: '37',
       page: 1,
       per_page: 10,
+    });
+  });
+
+  /** Issue #51 wiring: a service `rate_limited` failure surfaces with this tool's declared recovery. */
+  it('surfaces a service RateLimited error with the declared recovery hint', async () => {
+    mockService.searchPeople.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.RateLimited, 'exceeded limit of 10/min: 11', {
+        reason: 'rate_limited',
+        retryable: true,
+        retryAfter: 37,
+      }),
+    );
+    const declared = searchPeople.errors?.find((e) => e.reason === 'rate_limited');
+    expect(declared?.recovery).toBe(
+      'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+    );
+
+    const result = await runToolContract(searchPeople, { jurisdiction: 'wa' });
+
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: JsonRpcErrorCode.RateLimited,
+          data: {
+            reason: 'rate_limited',
+            retryable: true,
+            retryAfter: 37,
+            recovery: { hint: declared?.recovery },
+          },
+        },
+      },
     });
   });
 });

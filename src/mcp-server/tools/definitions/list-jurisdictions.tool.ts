@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdown, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const JurisdictionIncludeEnum = z.enum(['organizations', 'legislative_sessions', 'latest_runs']);
@@ -162,6 +163,15 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
       recovery:
         'Request a page within the max_page bound returned by a previous call; the error message names the valid range.',
     },
+    {
+      reason: 'rate_limited',
+      code: JsonRpcErrorCode.RateLimited,
+      when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+      recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+      retryable: true,
+      // Raised by the service, which reads the cap from the 429 body or its own daily-budget guard.
+      thrownBy: 'service',
+    },
   ],
 
   async handler(input, ctx) {
@@ -197,18 +207,23 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
     return result;
   },
 
+  /**
+   * Every upstream string goes through an encoder so a CommonMark parse reads it back as written:
+   * `escapeMarkdownInline` for text, `markdownLink` for the URL, and a code span for the session
+   * identifier — the value callers copy into `session=`, so it carries no backslashes.
+   */
   format: (result) => {
     const lines: string[] = [
       `**${result.pagination.total_items} jurisdictions** (page ${result.pagination.page}/${result.pagination.max_page}, per page ${result.pagination.per_page})`,
     ];
     for (const jur of result.results) {
       lines.push('');
-      lines.push(`## ${jur.name}`);
-      lines.push(`**ID:** ${jur.id}`);
-      lines.push(`**Classification:** ${jur.classification}`);
-      lines.push(`**URL:** ${jur.url}`);
-      lines.push(`**Latest bill update:** ${jur.latest_bill_update}`);
-      lines.push(`**Latest people update:** ${jur.latest_people_update}`);
+      lines.push(`## ${escapeMarkdownInline(jur.name)}`);
+      lines.push(`**ID:** ${escapeMarkdownInline(jur.id)}`);
+      lines.push(`**Classification:** ${escapeMarkdownInline(jur.classification)}`);
+      lines.push(`**URL:** ${markdownLink(jur.url, jur.url)}`);
+      lines.push(`**Latest bill update:** ${escapeMarkdownInline(jur.latest_bill_update)}`);
+      lines.push(`**Latest people update:** ${escapeMarkdownInline(jur.latest_people_update)}`);
       if (jur.legislative_sessions?.length) {
         lines.push('');
         lines.push('**Legislative sessions:**');
@@ -219,33 +234,39 @@ export const listJurisdictions = tool('openstates_list_jurisdictions', {
            * unknown, not open-ended — every observed case is a long-concluded session — so nothing
            * here substitutes "present" for an absent date.
            */
-          const cls = s.classification ? ` (${s.classification})` : '';
+          const cls = s.classification ? ` (${escapeMarkdownInline(s.classification)})` : '';
+          const start = escapeMarkdownInline(s.start_date);
+          const end = escapeMarkdownInline(s.end_date);
           const range =
-            s.start_date && s.end_date
-              ? ` ${s.start_date}–${s.end_date}`
-              : s.start_date
-                ? ` from ${s.start_date}`
-                : s.end_date
-                  ? ` until ${s.end_date}`
+            start && end
+              ? ` ${start}–${end}`
+              : start
+                ? ` from ${start}`
+                : end
+                  ? ` until ${end}`
                   : '';
-          lines.push(`- \`${s.identifier}\` — ${s.name}${cls}${range}`);
+          const identifier = markdown().inlineCode(s.identifier).build();
+          lines.push(`- ${identifier} — ${escapeMarkdownInline(s.name)}${cls}${range}`);
         }
       }
       if (jur.organizations?.length) {
         lines.push('');
         lines.push('**Organizations:**');
         for (const o of jur.organizations) {
-          const cls = o.classification ? ` (${o.classification})` : '';
-          const id = o.id ? ` — ${o.id}` : '';
-          lines.push(`- ${o.name ?? '(unnamed)'}${cls}${id}`);
+          const cls = o.classification ? ` (${escapeMarkdownInline(o.classification)})` : '';
+          const id = o.id ? ` — ${escapeMarkdownInline(o.id)}` : '';
+          const name = o.name === undefined ? '(unnamed)' : escapeMarkdownInline(o.name);
+          lines.push(`- ${name}${cls}${id}`);
         }
       }
       if (jur.latest_runs?.length) {
         lines.push('');
         lines.push('**Latest runs:**');
         for (const r of jur.latest_runs) {
-          const end = r.end_time ? ` → ${r.end_time}` : '';
-          lines.push(`- ${r.start_time}${end} (success: ${r.success ?? 'n/a'})`);
+          const end = r.end_time ? ` → ${escapeMarkdownInline(r.end_time)}` : '';
+          lines.push(
+            `- ${escapeMarkdownInline(r.start_time)}${end} (success: ${r.success ?? 'n/a'})`,
+          );
         }
       }
     }

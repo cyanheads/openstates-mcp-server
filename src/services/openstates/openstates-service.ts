@@ -11,16 +11,22 @@ import {
   rateLimited,
   serviceUnavailable,
   timeout,
+  validationError,
 } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
-import { fetchWithTimeout, logger, RateLimiter, withRetry } from '@cyanheads/mcp-ts-core/utils';
+import {
+  defaultIsTransient,
+  fetchWithTimeout,
+  logger,
+  RateLimiter,
+  withRetry,
+} from '@cyanheads/mcp-ts-core/utils';
 import type { ServerConfig } from '@/config/server-config.js';
 import { normalizeCommitteeJurisdiction } from './jurisdiction-inventory.js';
 import type {
   Bill,
   BillListResponse,
   BillSearchParams,
-  Chamber,
   Committee,
   CommitteeListResponse,
   CommitteeSearchParams,
@@ -30,6 +36,7 @@ import type {
   Jurisdiction,
   JurisdictionListParams,
   JurisdictionListResponse,
+  OrgClassification,
   PeopleSearchParams,
   Person,
   PersonListResponse,
@@ -80,6 +87,9 @@ function normalizePerson(raw: RawPerson): Person {
   return person;
 }
 
+/** The classifications whose union `org_classification=legislature` resolves to, in merge order. */
+type LegislativeArm = Extract<OrgClassification, 'upper' | 'lower' | 'legislature'>;
+
 /**
  * Upper bound on the number of pages `listJurisdictions` will auto-merge to satisfy the
  * one-call inventory promise. The `classification=state` set is 56 (50 states + DC + 5 US
@@ -117,7 +127,7 @@ const RATE_LIMIT_KEY = 'openstates:shared-key';
 const FETCH_BACKSTOP_MULTIPLIER = 2;
 
 /**
- * Statuses with a dedicated non-retryable path in `classifyUpstreamFailure`. Listing them keeps
+ * Statuses with a dedicated single-attempt path in `classifyUpstreamFailure`. Listing them keeps
  * `fetchWithTimeout` from logging an expected, already-handled outcome at `error` severity; the
  * thrown error is unchanged.
  */
@@ -167,6 +177,71 @@ function upstreamDetail(body: unknown): string | undefined {
   return flattened.length > MAX_DETAIL_LENGTH
     ? `${flattened.slice(0, MAX_DETAIL_LENGTH)}…`
     : flattened;
+}
+
+/**
+ * Whether a caller-supplied value can stand as one segment of a detail route. `encodeURIComponent`
+ * leaves `.` alone, so a `.` or `..` value reaches the URL parser as a relative step rather than a
+ * name, and an empty value leaves a segment no detail route has; either addresses some route other
+ * than the record's. Every other value encodes to a segment the parser keeps as written.
+ */
+function isRouteSegment(segment: string): boolean {
+  return segment !== '' && segment !== '.' && segment !== '..';
+}
+
+/** Some `detail` values are already sentences ("...for your API key."), others are bare clauses. */
+function asSentence(detail: string): string {
+  return /[.!?]$/.test(detail) ? detail : `${detail}.`;
+}
+
+/**
+ * Length of each fixed UTC window Open States counts a key's requests in, keyed by the unit its
+ * 429 `detail` names. The windows are calendar-aligned (the minute, the hour, the UTC day), not
+ * rolling, and rejected requests count toward them too.
+ */
+const RATE_WINDOW_MS = { min: 60_000, hour: 3_600_000, day: 86_400_000 } as const;
+
+/**
+ * The cap a 429 `detail` names: `exceeded limit of 10/min: 11`, `exceeded limit of 250/day: 251`.
+ * Matched only against `upstreamDetail` output, which is one line clamped to `MAX_DETAIL_LENGTH`,
+ * so the input is bounded before it reaches the pattern.
+ */
+const RATE_LIMIT_DETAIL = /^exceeded limit of \d+\/(min|hour|day): \d+$/;
+
+/**
+ * Seconds a rate-limited caller should wait before the same call can succeed. A `Retry-After`
+ * header wins when it parses (delta-seconds or HTTP-date); Open States sends none today, so the
+ * usual answer is the seconds left until the next UTC boundary of the window its `detail` names,
+ * which is never less than 1. With neither, there is nothing to base a wait on and the result is
+ * `undefined` rather than a guess.
+ */
+function rateLimitRetryAfter(header: unknown, detail: string | undefined): number | undefined {
+  if (typeof header === 'string') {
+    const trimmed = header.trim();
+    // Linear on a value bounded by the transport's header-size limit.
+    if (/^\d+$/.test(trimmed)) return Number(trimmed);
+    const at = Date.parse(trimmed);
+    if (!Number.isNaN(at)) return Math.max(0, Math.ceil((at - Date.now()) / 1000));
+  }
+  const unit = detail?.match(RATE_LIMIT_DETAIL)?.[1] as keyof typeof RATE_WINDOW_MS | undefined;
+  if (unit === undefined) return;
+  const windowMs = RATE_WINDOW_MS[unit];
+  return Math.ceil((windowMs - (Date.now() % windowMs)) / 1000);
+}
+
+/**
+ * `withRetry`'s default predicate, minus `RateLimited`. A cap — Open States' per-minute or daily
+ * limit, or this server's own daily budget — holds until its window rolls, so a retry inside the
+ * call is either refused again (and still counted against the key) or a sleep of up to a minute,
+ * reaching the MCP client's request timeout. Excluding the code here keeps those errors
+ * `retryable: true` on the wire, which is what tells the caller to wait `retryAfter` and call
+ * again; stamping `retryable: false` to stop the loop would tell it the opposite.
+ */
+function isTransientWithinCall(error: unknown): boolean {
+  return (
+    !(error instanceof McpError && error.code === JsonRpcErrorCode.RateLimited) &&
+    defaultIsTransient(error)
+  );
 }
 
 /**
@@ -314,6 +389,7 @@ export class OpenStatesApiService {
         {
           operation: 'OpenStatesApiService.fetchJson',
           baseDelayMs: 1500,
+          isTransient: isTransientWithinCall,
           signal: AbortSignal.any([ctx.signal, budget.signal]),
         },
       );
@@ -400,8 +476,10 @@ export class OpenStatesApiService {
    *   experiences them identically (the server gave up waiting) and acts on the same narrowing
    *   hint, so they differ only in the message's stated ceiling. Keying on an owned signal first
    *   rather than on the code keeps this correct however the helper classifies an abort.
-   * - **RateLimited.** The shared key's cap: deterministic until the window rolls, so retrying
-   *   only burns the remaining budget against a capped endpoint.
+   * - **RateLimited.** The shared key's cap. Open States names it in the 429 `detail`, which
+   *   becomes the message, and the wait until its window rolls becomes `retryAfter` (see
+   *   `rateLimitRetryAfter`). It stays `retryable: true` — the same call succeeds after that wait
+   *   — and `isTransientWithinCall` keeps `withRetry` from spending it inside this call.
    * - **Rejected request.** Open States names the violated constraint in a `detail` field
    *   (`invalid page, must be in [1, 1]`); the classification is already right, so only the
    *   message is rewritten to carry it. The status keeps its own code, which is what lets a tool
@@ -447,9 +525,24 @@ export class OpenStatesApiService {
     }
 
     if (mcpError?.code === JsonRpcErrorCode.RateLimited) {
+      // The transport's raw `Retry-After` string is replaced by the parsed seconds, or dropped
+      // when it does not parse, so `retryAfter` is only ever a number the caller can wait on.
+      const { retryAfter: retryAfterHeader, ...data } = mcpError.data ?? {};
+      const detail = upstreamDetail(data['body']);
+      const retryAfter = rateLimitRetryAfter(retryAfterHeader, detail);
+      // No recovery hint: the framework fills the calling definition's declared `rate_limited`
+      // recovery, so the hint stays one contract entry rather than a string written here.
       return rateLimited(
-        mcpError.message,
-        { ...mcpError.data, url: redactedUrl(url), retryable: false },
+        detail === undefined
+          ? "Open States rate-limited this server's API key (HTTP 429)."
+          : `Open States rate-limited this server's API key: ${asSentence(detail)}`,
+        {
+          ...data,
+          url: redactedUrl(url),
+          reason: 'rate_limited',
+          retryable: true,
+          ...(retryAfter === undefined ? {} : { retryAfter }),
+        },
         { cause: mcpError },
       );
     }
@@ -460,11 +553,9 @@ export class OpenStatesApiService {
     if (mcpError && status !== undefined && status >= 400 && status < 500) {
       const detail = upstreamDetail(mcpError.data?.['body']);
       if (detail !== undefined) {
-        // Some details are already sentences ("...for your API key."), others are bare clauses.
-        const sentence = /[.!?]$/.test(detail) ? detail : `${detail}.`;
         return new McpError(
           mcpError.code,
-          `Open States rejected the request: ${sentence}`,
+          `Open States rejected the request: ${asSentence(detail)}`,
           { ...mcpError.data, url: redactedUrl(url) },
           { cause: mcpError },
         );
@@ -475,16 +566,26 @@ export class OpenStatesApiService {
   }
 
   /**
-   * Fail-fast budget guard over the shared-key `RateLimiter`. Re-stamps the limiter's `RateLimited`
-   * rejection with `retryable: false`: `withRetry` classifies `RateLimited` as transient by
-   * default, so without the flag it would retry the guard's own rejection four times and defeat it.
+   * Fail-fast budget guard over the shared-key `RateLimiter`. Its rejection carries the same
+   * `rate_limited` contract as an Open States 429 — `retryable: true`, with `retryAfter` set to the
+   * seconds until the limiter's window frees a slot — and keeps its own self-imposed-cap message.
+   * `isTransientWithinCall` is what keeps `withRetry` from retrying it within the call.
    */
   private checkRateBudget(): void {
     try {
       this.rateLimiter.check(RATE_LIMIT_KEY);
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.RateLimited) {
-        throw rateLimited(err.message, { ...err.data, retryable: false }, { cause: err });
+        throw rateLimited(
+          err.message,
+          {
+            ...err.data,
+            reason: 'rate_limited',
+            retryable: true,
+            retryAfter: err.data?.['waitTimeSeconds'],
+          },
+          { cause: err },
+        );
       }
       throw err;
     }
@@ -520,6 +621,7 @@ export class OpenStatesApiService {
     return this.fetchJson<BillListResponse>(url, ctx);
   }
 
+  /** Rejects with `ValidationError`, before any request, when a part is not a route segment. */
   getBillByPath(
     jurisdiction: string,
     session: string,
@@ -527,31 +629,64 @@ export class OpenStatesApiService {
     include: string[] | undefined,
     ctx: Context,
   ): Promise<Bill> {
-    const encodedJur = encodeURIComponent(jurisdiction);
-    const encodedSession = encodeURIComponent(session);
-    const encodedBillId = encodeURIComponent(billId);
-    const url = this.buildUrl(`/bills/${encodedJur}/${encodedSession}/${encodedBillId}`, {
-      include,
-    });
+    const segments = [jurisdiction, session, billId];
     ctx.log.debug('Fetching bill by path', { jurisdiction, session, billId });
-    return this.fetchJson<Bill>(url, ctx);
+    return this.fetchDetail<Bill>(
+      'bills',
+      segments,
+      `Bill path ${JSON.stringify(segments.join('/'))} is not a bill route. Pass the jurisdiction, session, and bill identifier of a bill exactly as a bill search returns them.`,
+      include,
+      ctx,
+    );
   }
 
+  /**
+   * `openstatesId` is either `ocd-bill/<uuid>` or `<jurisdiction>/<session>/<bill_id>`; both are
+   * `/`-separated routes under `/bills/`. Rejects with `ValidationError`, before any request,
+   * when a segment is not a route segment.
+   */
   getBillById(openstatesId: string, include: string[] | undefined, ctx: Context): Promise<Bill> {
-    // The API accepts the full OCD bill ID (e.g. "ocd-bill/...") in the path, unmodified.
-    const url = this.buildUrl(`/bills/${openstatesId}`, { include });
     ctx.log.debug('Fetching bill by OCD ID', { openstatesId });
-    return this.fetchJson<Bill>(url, ctx);
+    return this.fetchDetail<Bill>(
+      'bills',
+      openstatesId.split('/'),
+      `Bill ID ${JSON.stringify(openstatesId)} is not a bill route. Pass the id of a bill exactly as a bill search returns it.`,
+      include,
+      ctx,
+    );
+  }
+
+  /**
+   * One `/<collection>/…` detail route — the only way a caller-supplied value enters a request
+   * path. Each segment is percent-encoded on its own, so a character with URL meaning (`?`, `#`,
+   * `%`, and `/` inside a single-id route) stays inside its segment rather than starting a query,
+   * fragment, or new segment, while the `/` separators keep the route's shape. A segment
+   * `isRouteSegment` refuses rejects the call with `rejection` as the message, before any request.
+   */
+  private fetchDetail<T>(
+    collection: 'bills' | 'committees' | 'events' | 'jurisdictions',
+    segments: string[],
+    rejection: string,
+    include: string[] | undefined,
+    ctx: Context,
+  ): Promise<T> {
+    if (!segments.every(isRouteSegment)) return Promise.reject(validationError(rejection));
+    const url = this.buildUrl(`/${collection}/${segments.map(encodeURIComponent).join('/')}`, {
+      include,
+    });
+    return this.fetchJson<T>(url, ctx);
   }
 
   // --- People ---
 
   /**
-   * `org_classification=legislature` is in the upstream enum and is accepted input, but it
-   * is never any *person's* current role — only `upper`/`lower` (chambers) and `executive`
-   * (individual officials) are — so upstream matches nobody and returns an empty set. The
-   * legislature is the union of the two chambers, resolved here; every other classification
-   * passes through as a single upstream query.
+   * Upstream's `org_classification=legislature` filter matches only roles classified
+   * `legislature` itself, and which members carry that depends on the body's shape. In a
+   * bicameral jurisdiction every member sits in a chamber (`upper` or `lower`), so the filter
+   * matches nobody there; in a unicameral one (Nebraska, the DC Council — Open States also models
+   * Guam and the US Virgin Islands this way) there is no chamber and every member's role is
+   * `legislature`. The legislature is therefore resolved here as the union of all three; every
+   * other classification passes through as a single upstream query.
    */
   searchPeople(params: PeopleSearchParams, ctx: Context): Promise<PersonListResponse> {
     return params.org_classification === 'legislature'
@@ -594,17 +729,17 @@ export class OpenStatesApiService {
   }
 
   /**
-   * Records `[start, start + count)` of one chamber, mapped onto the upstream's page-based
-   * pagination. `head` is that chamber's page 1 at the same `per_page`, reused whenever the
-   * range reaches into it.
+   * Records `[start, start + count)` of one union arm, mapped onto the upstream's page-based
+   * pagination. `head` is that arm's page 1 at the same `per_page`, reused whenever the range
+   * reaches into it.
    *
-   * Upstream 404s (`invalid page, must be in [1, N]`) for any page above a chamber's
-   * `max_page`, so the range is clamped to `head`'s `total_items` before any page number is
-   * derived — every request this issues is inside the legal range by construction.
+   * Upstream 404s (`invalid page, must be in [1, N]`) for any page above an arm's `max_page`,
+   * so the range is clamped to `head`'s `total_items` before any page number is derived —
+   * every request this issues is inside the legal range by construction.
    */
-  private async fetchChamberRange(
+  private async fetchArmRange(
     params: PeopleSearchParams,
-    chamber: Chamber,
+    arm: LegislativeArm,
     head: PersonListResponse,
     start: number,
     count: number,
@@ -622,7 +757,7 @@ export class OpenStatesApiService {
         page === 1
           ? Promise.resolve(head)
           : this.fetchPeoplePage(
-              { ...params, org_classification: chamber, page, per_page: perPage },
+              { ...params, org_classification: arm, page, per_page: perPage },
               ctx,
             ),
       );
@@ -633,18 +768,22 @@ export class OpenStatesApiService {
   }
 
   /**
-   * The `legislature` union: every `upper` member followed by every `lower` member, sliced to
-   * the caller's page.
+   * The `legislature` union: every `upper` member, then every `lower` member, then every member
+   * whose role is classified `legislature`, sliced to the caller's page. A person holds one
+   * current role, so the arms never overlap.
    *
-   * Page 1 of each chamber is the only request that is legal before the chamber's size is
-   * known, and it doubles as the head of the union — so both are fetched up front, and their
-   * `total_items` bound every page request that follows. The caller's window is then sliced
-   * out of the *merged* set: once it runs past `upper`, it reads into `lower` at the offset
-   * the merge has actually reached. Threading the caller's offset into each chamber query
-   * instead would skip that many records in both and silently drop legislators.
+   * Page 1 of each arm is the only request that is legal before the arm's size is known, and it
+   * doubles as the head of the union — so heads are fetched first, and their `total_items` bound
+   * every page request that follows. The caller's window is then sliced out of the *merged* set:
+   * once it runs past one arm, it reads into the next at the offset the merge has actually
+   * reached. Threading the caller's offset into each arm query instead would skip that many
+   * records in every arm and silently drop legislators.
    *
-   * Costs two upstream calls for the common first page, at most four for a deep one — never a
-   * full drain of either chamber.
+   * Within one jurisdiction a legislature is either chambered or not, so a scoped query asks for
+   * the `legislature` arm only when both chambers come back empty: a bicameral jurisdiction costs
+   * two calls for the first page and at most four for a deep one, as before, and a unicameral one
+   * three and four. An unscoped query (an `id` lookup) can span both shapes, so it fetches all
+   * three heads at once. Never a full drain of any arm.
    */
   private async searchLegislature(
     params: PeopleSearchParams,
@@ -653,47 +792,49 @@ export class OpenStatesApiService {
     const perPage = params.per_page ?? 10;
     const page = params.page ?? 1;
     const offset = (page - 1) * perPage;
+    const fetchHead = (arm: LegislativeArm) =>
+      this.fetchPeoplePage({ ...params, org_classification: arm, page: 1, per_page: perPage }, ctx);
 
-    const [upperHead, lowerHead] = await Promise.all([
-      this.fetchPeoplePage(
-        { ...params, org_classification: 'upper', page: 1, per_page: perPage },
-        ctx,
-      ),
-      this.fetchPeoplePage(
-        { ...params, org_classification: 'lower', page: 1, per_page: perPage },
-        ctx,
-      ),
+    const scoped = params.jurisdiction !== undefined;
+    const [upperHead, lowerHead, unscopedHead] = await Promise.all([
+      fetchHead('upper'),
+      fetchHead('lower'),
+      scoped ? undefined : fetchHead('legislature'),
     ]);
-    const upperTotal = upperHead.pagination.total_items;
-    const lowerTotal = lowerHead.pagination.total_items;
+    const chambered = upperHead.pagination.total_items + lowerHead.pagination.total_items > 0;
+    const legislatureHead =
+      unscopedHead ?? (chambered ? undefined : await fetchHead('legislature'));
 
-    const upperSlice = await this.fetchChamberRange(
-      params,
-      'upper',
-      upperHead,
-      offset,
-      perPage,
-      ctx,
-    );
-    const lowerSlice = await this.fetchChamberRange(
-      params,
-      'lower',
-      lowerHead,
-      Math.max(0, offset - upperTotal),
-      perPage - upperSlice.length,
-      ctx,
-    );
+    const arms: [LegislativeArm, PersonListResponse][] = [
+      ['upper', upperHead],
+      ['lower', lowerHead],
+    ];
+    if (legislatureHead) arms.push(['legislature', legislatureHead]);
+    const results: Person[] = [];
+    let armStart = 0; // merged index of the current arm's first record
+    for (const [arm, head] of arms) {
+      results.push(
+        ...(await this.fetchArmRange(
+          params,
+          arm,
+          head,
+          Math.max(0, offset - armStart),
+          perPage - results.length,
+          ctx,
+        )),
+      );
+      armStart += head.pagination.total_items;
+    }
 
-    const totalItems = upperTotal + lowerTotal;
+    const totalItems = armStart;
     ctx.log.debug('Merged legislature union', {
       jurisdiction: params.jurisdiction,
-      upperTotal,
-      lowerTotal,
-      returned: upperSlice.length + lowerSlice.length,
+      totals: Object.fromEntries(arms.map(([arm, head]) => [arm, head.pagination.total_items])),
+      returned: results.length,
     });
 
     return {
-      results: [...upperSlice, ...lowerSlice],
+      results,
       pagination: {
         page,
         per_page: perPage,
@@ -754,14 +895,20 @@ export class OpenStatesApiService {
     };
   }
 
+  /** Rejects with `ValidationError`, before any request, when the id is not a route segment. */
   async getCommittee(
     committeeId: string,
     include: string[] | undefined,
     ctx: Context,
   ): Promise<Committee> {
-    const url = this.buildUrl(`/committees/${encodeURIComponent(committeeId)}`, { include });
     ctx.log.debug('Fetching committee', { committeeId });
-    const raw = await this.fetchJson<Record<string, unknown>>(url, ctx);
+    const raw = await this.fetchDetail<Record<string, unknown>>(
+      'committees',
+      [committeeId],
+      `Committee ID ${JSON.stringify(committeeId)} is not a committee route. Pass the id of a committee exactly as a committee search returns it.`,
+      include,
+      ctx,
+    );
     const memberships = Array.isArray(raw['memberships'])
       ? (raw['memberships'] as Record<string, unknown>[]).map(normalizeMembership)
       : undefined;
@@ -785,10 +932,16 @@ export class OpenStatesApiService {
     return this.fetchJson<EventListResponse>(url, ctx);
   }
 
+  /** Rejects with `ValidationError`, before any request, when the id is not a route segment. */
   getEvent(eventId: string, include: string[] | undefined, ctx: Context): Promise<Event> {
-    const url = this.buildUrl(`/events/${encodeURIComponent(eventId)}`, { include });
     ctx.log.debug('Fetching event', { eventId });
-    return this.fetchJson<Event>(url, ctx);
+    return this.fetchDetail<Event>(
+      'events',
+      [eventId],
+      `Event ID ${JSON.stringify(eventId)} is not an event route. Pass the id of an event exactly as an event search returns it.`,
+      include,
+      ctx,
+    );
   }
 
   // --- Jurisdictions ---
@@ -820,7 +973,7 @@ export class OpenStatesApiService {
    * inventory no longer fits a single page. For the default full-inventory request — page 1,
    * whose complete set spans at most `MAX_JURISDICTION_MERGE_PAGES` pages — the remaining pages
    * are fetched and merged into one synthesized response, the same reassembly `searchLegislature`
-   * does for the chamber union. Explicit deep paging (`page > 1`) and collections too large to
+   * does for the legislature union. Explicit deep paging (`page > 1`) and collections too large to
    * complete within the bound (e.g. municipalities) fall through to plain single-page pagination.
    */
   async listJurisdictions(
@@ -854,14 +1007,24 @@ export class OpenStatesApiService {
     };
   }
 
+  /**
+   * The id — an OCD jurisdiction ID, a state name, or an abbreviation — is one segment, its `/`
+   * percent-encoded. Rejects with `ValidationError`, before any request, when it is not a route
+   * segment.
+   */
   getJurisdiction(
     jurisdictionId: string,
     include: string[] | undefined,
     ctx: Context,
   ): Promise<Jurisdiction> {
-    const url = this.buildUrl(`/jurisdictions/${encodeURIComponent(jurisdictionId)}`, { include });
     ctx.log.debug('Fetching jurisdiction', { jurisdictionId });
-    return this.fetchJson<Jurisdiction>(url, ctx);
+    return this.fetchDetail<Jurisdiction>(
+      'jurisdictions',
+      [jurisdictionId],
+      `Jurisdiction ID ${JSON.stringify(jurisdictionId)} is not a jurisdiction route. Pass a jurisdiction's id or name exactly as a jurisdiction listing returns it, or its two-letter abbreviation.`,
+      include,
+      ctx,
+    );
   }
 
   /** Releases the budget limiter's sweep timer. The counterpart to the constructor. */

@@ -8,6 +8,11 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { searchBills } from '@/mcp-server/tools/definitions/search-bills.tool.js';
+import { inlineTypes, links, normalizeLink, readBack } from '../helpers/commonmark.js';
+import { PAYLOADS, type Slot, structure } from '../helpers/markdown-sweep.js';
+
+const textOf = (blocks: ReturnType<NonNullable<typeof searchBills.format>>) =>
+  (blocks[0] as { text: string }).text;
 
 vi.mock('@/services/openstates/openstates-service.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/openstates/openstates-service.js')>()),
@@ -571,7 +576,9 @@ describe('searchBills — zero-result recovery names every filter', () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
     const ctx = createMockContext({ errors: searchBills.errors });
     await searchBills.handler(searchBills.input.parse(everyFilter), ctx);
-    const notice = getEnrichment(ctx).notice as string;
+    // The notice is authored Markdown with caller values encoded (`subject=\["Housing"\]`), so it
+    // is read as a reader sees it.
+    const notice = readBack(getEnrichment(ctx).notice as string).join('\n');
     expect(notice).toContain('jurisdiction="wa"');
     expect(notice).toContain('q="housing"');
     expect(notice).toContain('session="2025-2026"');
@@ -758,60 +765,70 @@ describe('searchBills format — empty abstract note renders no stray punctuatio
  * Regression coverage for issue #41. `date` is a required, non-nullable string on versions and
  * documents, and Open States routinely sends `""` alongside a populated `note`, which left a
  * bare `()` mid-line. The note and date segments are independently optional, so each of the four
- * combinations is pinned here: id alone, id + note, id + date, id + note + date. The last must
- * stay byte-identical to what shipped before the guard. structuredContent is unaffected:
- * `date: ""` is the accurate upstream value and stays.
+ * combinations is pinned here: id alone, id + note, id + date, id + note + date. Each line is read
+ * back through a CommonMark parse (the link is a Markdown link since issue #53), and the read-back
+ * text and the link are pinned whole. structuredContent is unaffected: `date: ""` is the accurate
+ * upstream value and stays.
  */
 describe('searchBills format — version and document note/date composition (issue #41)', () => {
   const pagination = { page: 1, per_page: 10, max_page: 1, total_items: 1 };
-  const links = [{ url: 'https://leg.wa.gov/HB1000.pdf', media_type: 'application/pdf' }];
-  const tail = 'https://leg.wa.gov/HB1000.pdf [application/pdf]';
+  const url = 'https://leg.wa.gov/HB1000.pdf';
+  const linkList = [{ url, media_type: 'application/pdf' }];
 
-  const renderLines = (bill: Record<string, unknown>) => {
-    const blocks = searchBills.format!({ results: [{ ...mockBill, ...bill }], pagination });
-    return (blocks[0]! as { text: string }).text.split('\n');
-  };
+  const render = (bill: Record<string, unknown>) =>
+    textOf(searchBills.format!({ results: [{ ...mockBill, ...bill }], pagination }));
 
   const renderVersion = (note: string, date: string) =>
-    renderLines({ versions: [{ id: 'HB1000-2025', note, date, links }] });
+    render({ versions: [{ id: 'HB1000-2025', note, date, links: linkList }] });
 
   const renderDocument = (note: string, date: string) =>
-    renderLines({ documents: [{ id: 'doc-1', note, date, links }] });
+    render({ documents: [{ id: 'doc-1', note, date, links: linkList }] });
 
-  it('renders a version with neither note nor date as the id alone', () => {
-    expect(renderVersion('', '')).toContain(`- [HB1000-2025]: ${tail}`);
-  });
-
-  it('renders a version with a note and no date without a parenthetical', () => {
-    expect(renderVersion('Introduced', '')).toContain(`- [HB1000-2025] Introduced: ${tail}`);
-  });
-
-  it('renders a version with a date and no note', () => {
-    expect(renderVersion('', '2025-01-13')).toContain(`- [HB1000-2025] (2025-01-13): ${tail}`);
-  });
-
-  it('renders a version with both note and date unchanged', () => {
-    expect(renderVersion('Introduced', '2025-01-13')).toContain(
-      `- [HB1000-2025] Introduced (2025-01-13): ${tail}`,
-    );
-  });
-
-  it('renders a document with neither note nor date as the id alone', () => {
-    expect(renderDocument('', '')).toContain(`- [doc-1]: ${tail}`);
-  });
-
-  it('renders a document with a note and no date without a parenthetical', () => {
-    expect(renderDocument('Fiscal Note', '')).toContain(`- [doc-1] Fiscal Note: ${tail}`);
-  });
-
-  it('renders a document with a date and no note', () => {
-    expect(renderDocument('', '2025-01-20')).toContain(`- [doc-1] (2025-01-20): ${tail}`);
-  });
-
-  it('renders a document with both note and date unchanged', () => {
-    expect(renderDocument('Fiscal Note', '2025-01-20')).toContain(
-      `- [doc-1] Fiscal Note (2025-01-20): ${tail}`,
-    );
+  it.each([
+    [
+      'a version with neither note nor date as the id alone',
+      () => renderVersion('', ''),
+      '[HB1000-2025]: application/pdf',
+    ],
+    [
+      'a version with a note and no date without a parenthetical',
+      () => renderVersion('Introduced', ''),
+      '[HB1000-2025] Introduced: application/pdf',
+    ],
+    [
+      'a version with a date and no note',
+      () => renderVersion('', '2025-01-13'),
+      '[HB1000-2025] (2025-01-13): application/pdf',
+    ],
+    [
+      'a version with both note and date',
+      () => renderVersion('Introduced', '2025-01-13'),
+      '[HB1000-2025] Introduced (2025-01-13): application/pdf',
+    ],
+    [
+      'a document with neither note nor date as the id alone',
+      () => renderDocument('', ''),
+      '[doc-1]: application/pdf',
+    ],
+    [
+      'a document with a note and no date without a parenthetical',
+      () => renderDocument('Fiscal Note', ''),
+      '[doc-1] Fiscal Note: application/pdf',
+    ],
+    [
+      'a document with a date and no note',
+      () => renderDocument('', '2025-01-20'),
+      '[doc-1] (2025-01-20): application/pdf',
+    ],
+    [
+      'a document with both note and date',
+      () => renderDocument('Fiscal Note', '2025-01-20'),
+      '[doc-1] Fiscal Note (2025-01-20): application/pdf',
+    ],
+  ])('renders %s', (_name, renderFn, line) => {
+    const text = renderFn();
+    expect(readBack(text)).toContain(line);
+    expect(links(text)).toEqual([{ href: url, label: 'application/pdf' }]);
   });
 });
 
@@ -868,5 +885,300 @@ describe('searchBills — empty vote start_date and action date (issue #43)', ()
     expect(renderLines({ actions: [action('2025-01-14')] })).toContain(
       '- #1 2025-01-14: Introduced — House (lower)',
     );
+  });
+});
+
+/** Issue #51 wiring: a service `rate_limited` error surfaces with this tool's declared recovery. */
+describe('searchBills — rate_limited contract (issue #51)', () => {
+  it('surfaces a service RateLimited error with the declared recovery and retryAfter', async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    vi.mocked(getOpenStatesApiService).mockReturnValue({
+      searchBills: vi.fn().mockRejectedValue(
+        new McpError(JsonRpcErrorCode.RateLimited, 'exceeded limit of 250/day: 251', {
+          reason: 'rate_limited',
+          retryable: true,
+          retryAfter: 3600,
+        }),
+      ),
+    } as never);
+
+    const result = await runToolContract(searchBills, { jurisdiction: 'wa', q: 'housing' });
+
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: JsonRpcErrorCode.RateLimited,
+          data: {
+            reason: 'rate_limited',
+            retryable: true,
+            retryAfter: 3600,
+            recovery: {
+              hint: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+            },
+          },
+        },
+      },
+    });
+  });
+});
+
+/**
+ * Issue #53, server-authored enrichment: the empty-result notice and the `appliedFilters` trailer
+ * quote caller input, so a `q` holding Markdown must read back literally in `content[]`.
+ */
+describe('searchBills — caller input quoted in enrichment reads back literally (issue #53)', () => {
+  const q = '*x* [y](https://e.org) `z`';
+
+  beforeEach(async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    vi.mocked(getOpenStatesApiService).mockReturnValue({
+      searchBills: vi.fn().mockResolvedValue({
+        results: [],
+        pagination: { page: 1, per_page: 10, max_page: 1, total_items: 0 },
+      }),
+    } as never);
+  });
+
+  it('encodes q in the notice and renders appliedFilters as a code literal', async () => {
+    const result = await runToolContract(searchBills, { jurisdiction: 'wa', q });
+    const text = result.content.map((block) => (block as { text: string }).text).join('\n\n');
+
+    const types = inlineTypes(text);
+    expect(types.has('em_open')).toBe(false);
+    expect(types.has('link_open')).toBe(false);
+    // The trailer fields share one paragraph, one per line.
+    const read = readBack(text).flatMap((block) => block.split('\n'));
+    expect(read).toContain(
+      `No bills matched jurisdiction="wa", q=${JSON.stringify(q)}. Try broadening the query or removing filters.`,
+    );
+    expect(read).toContain(
+      `appliedFilters: ${JSON.stringify({ jurisdiction: 'wa', q, sort: 'updated_desc', page: 1, per_page: 10 })}`,
+    );
+  });
+
+  it('keeps a real-shaped notice byte-identical', async () => {
+    const result = await runToolContract(searchBills, {
+      jurisdiction: 'wa',
+      q: 'housing',
+      sponsor_classification: 'primary',
+      action_since: '2025-01-01',
+    });
+    expect((result.structuredContent as { notice: string }).notice).toBe(
+      'No bills matched jurisdiction="wa", q="housing", sponsor_classification="primary", action_since="2025-01-01". Try broadening the query or removing filters.',
+    );
+  });
+});
+
+/**
+ * Issue #53: every upstream string `format()` renders reads back unchanged through a CommonMark
+ * parse. `fullBill` populates every string leaf with two entries per array, nested arrays included
+ * (sponsorships → person, votes → counts and per-legislator votes → voter, versions/documents →
+ * links), and the page carries two bills, so a field rendered raw at any depth or index changes
+ * either the parsed structure or the read-back text.
+ */
+function fullBill(text: (slot: Slot) => string, url: () => string) {
+  const t = () => text('inline');
+  const h = () => text('heading');
+  const link = () => ({ url: url(), media_type: t() });
+  const textRecord = () => ({ id: t(), note: t(), date: t(), links: [link(), link()] });
+  const vote = (withVoter: boolean) => ({
+    id: t(),
+    motion_text: h(),
+    start_date: h(), // rendered in the vote heading beside motion_text
+    result: t(),
+    identifier: t(),
+    counts: [
+      { option: t(), value: 60 },
+      { option: t(), value: 30 },
+    ],
+    votes: [
+      { option: t(), voter_name: t(), ...(withVoter ? { voter: { id: t(), name: t() } } : {}) },
+      { option: t(), voter_name: t(), voter: { id: t(), name: t() } },
+    ],
+  });
+  return {
+    id: t(),
+    identifier: h(),
+    title: h(),
+    session: t(),
+    jurisdiction: { id: t(), name: t() },
+    from_organization: { name: t(), classification: t() },
+    classification: [t(), t()],
+    subject: [t(), t()],
+    first_action_date: t(),
+    latest_action_date: t(),
+    latest_action_description: t(),
+    latest_passage_date: t(),
+    updated_at: t(),
+    openstates_url: url(),
+    sponsorships: [
+      {
+        name: t(),
+        entity_type: t(),
+        primary: true,
+        classification: t(),
+        person: { id: t(), name: t() },
+      },
+      { name: t(), entity_type: t(), primary: false, classification: t() },
+    ],
+    actions: [0, 1].map((order) => ({
+      description: t(),
+      date: t(),
+      classification: [t(), t()],
+      order,
+      organization: { name: t(), classification: t() },
+    })),
+    abstracts: [
+      { abstract: t(), note: t() },
+      { abstract: t(), note: t() },
+    ],
+    other_titles: [
+      { title: t(), note: t() },
+      { title: t(), note: t() },
+    ],
+    other_identifiers: [
+      { identifier: t(), scheme: t() },
+      { identifier: t(), scheme: t() },
+    ],
+    sources: [
+      { url: url(), note: t() },
+      { url: url(), note: t() },
+    ],
+    versions: [textRecord(), textRecord()],
+    documents: [textRecord(), textRecord()],
+    votes: [vote(true), vote(false)],
+    related_bills: [0, 1].map(() => ({
+      identifier: t(),
+      legislative_session: t(),
+      relation_type: t(),
+    })),
+  };
+}
+
+function page(text: (slot: Slot) => string, url: () => string) {
+  return searchBills.output.parse({
+    results: [fullBill(text, url), fullBill(text, url)],
+    pagination: { page: 1, per_page: 2, max_page: 1, total_items: 2 },
+  });
+}
+
+/** String leaves across the two-bill page — pinned so a fixture that loses a field fails. */
+const TEXT_LEAVES = 210;
+
+describe('searchBills format — upstream strings read back literally (issue #53)', () => {
+  const urls = () => {
+    let u = 0;
+    return () => `https://example.org/u${u++}`;
+  };
+
+  it.each(PAYLOADS)('%s', (_name, payload) => {
+    let n = 0;
+    const marker = () => `f${String(n++).padStart(3, '0')}`;
+    const benign = textOf(searchBills.format!(page(() => marker(), urls())));
+
+    n = 0;
+    const values: string[] = [];
+    const hostile = textOf(
+      searchBills.format!(
+        page((slot) => {
+          const value = payload(marker(), slot);
+          values.push(value);
+          return value;
+        }, urls()),
+      ),
+    );
+
+    expect(values).toHaveLength(TEXT_LEAVES);
+    expect(structure(hostile)).toEqual(structure(benign));
+    const read = readBack(hostile).join('\n');
+    for (const value of values) expect(read).toContain(value);
+  });
+
+  it('keeps real-shaped identifiers byte-identical', () => {
+    const text = textOf(
+      searchBills.format!({
+        results: [
+          {
+            ...mockBill,
+            id: 'ocd-bill/4f255ccf-42a6-46ad-bbc6-0b027ebb15f2',
+            session: '2025rs',
+            other_identifiers: [{ identifier: 'ocd-bill-wa-2025_2026-hb2073' }],
+          },
+        ],
+        pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+      }),
+    );
+    expect(text.split('\n')).toEqual(
+      expect.arrayContaining([
+        '## HB 1000 — An act relating to public safety',
+        '**ID:** ocd-bill/4f255ccf-42a6-46ad-bbc6-0b027ebb15f2',
+        '**Session:** 2025rs | **Jurisdiction:** Washington (ocd-jurisdiction/country:us/state:wa/government)',
+        '**Latest action:** 2025-03-10 — Passed Senate',
+        '- ocd-bill-wa-2025_2026-hb2073',
+      ]),
+    );
+  });
+});
+
+describe('searchBills format — URL fields render as links (issue #53)', () => {
+  it('renders every URL field as one link: href is the URL, label the note or media type', () => {
+    let n = 0;
+    let u = 0;
+    const result = page(
+      () => `f${String(n++).padStart(3, '0')}`,
+      () => `https://example.org/u${u++}/a b(c)<d>[e]&amp;f_g*h`,
+    );
+    const linkTo = (href: string, label: string) => ({ href: normalizeLink(href), label });
+
+    expect(links(textOf(searchBills.format!(result)))).toEqual(
+      result.results.flatMap((bill) => [
+        linkTo(bill.openstates_url!, bill.openstates_url!),
+        ...bill.versions!.flatMap((v) => v.links.map((l) => linkTo(l.url, l.media_type))),
+        ...bill.documents!.flatMap((d) => d.links.map((l) => linkTo(l.url, l.media_type))),
+        ...bill.sources!.map((s) => linkTo(s.url, s.note)),
+      ]),
+    );
+  });
+
+  it('labels a link with its URL when the note or media type is empty', () => {
+    const url = 'https://leg.wa.gov/a b(c).pdf';
+    const text = textOf(
+      searchBills.format!({
+        results: [
+          {
+            ...mockBill,
+            documents: [{ id: 'd1', note: '', date: '', links: [{ url, media_type: '' }] }],
+            sources: [{ url, note: '' }],
+          },
+        ],
+        pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+      }),
+    );
+    expect(links(text)).toEqual([
+      { href: normalizeLink(url), label: url },
+      { href: normalizeLink(url), label: url },
+    ]);
+    expect(text).not.toContain('_()_');
+    expect(readBack(text)).toContain(`[d1]: ${url}`);
+  });
+
+  it('renders a non-http(s) URL as literal text with no link token', () => {
+    const text = textOf(
+      searchBills.format!({
+        results: [
+          {
+            ...mockBill,
+            openstates_url: 'javascript:alert(1)',
+            sources: [{ url: 'ftp://example.org/x', note: 'Mirror' }],
+          },
+        ],
+        pagination: { page: 1, per_page: 10, max_page: 1, total_items: 1 },
+      }),
+    );
+    expect(links(text)).toEqual([]);
+    const read = readBack(text).join('\n');
+    expect(read).toContain('javascript:alert(1)');
+    expect(read).toContain('Mirror (ftp://example.org/x)');
   });
 });

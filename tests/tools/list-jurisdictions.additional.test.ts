@@ -8,6 +8,8 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { listJurisdictions } from '@/mcp-server/tools/definitions/list-jurisdictions.tool.js';
+import { inlineTokens, links, normalizeLink, readBack } from '../helpers/commonmark.js';
+import { HOSTILE_VALUES, MULTILINE_VALUES, shape } from '../helpers/markdown-sweep.js';
 
 vi.mock('@/services/openstates/openstates-service.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/openstates/openstates-service.js')>()),
@@ -358,5 +360,168 @@ describe('listJurisdictions — sessions with an empty classification or date (i
     });
     expect(text.split('\n')).toContain('- `27` — 27th Legislature (2011-2012) until 2012-04-15');
     expect(text).not.toContain('()');
+  });
+});
+
+/**
+ * Issue #53: every upstream string in `format()` reads back exactly from a CommonMark parse. Each
+ * field of the second jurisdiction is set to each hostile class in turn; it must appear verbatim
+ * in the read-back text and leave the block structure and the non-text inline tokens exactly as
+ * the benign value did.
+ */
+describe('listJurisdictions — format() Markdown fidelity (issue #53)', () => {
+  const jurisdiction = {
+    id: 'ocd-jurisdiction/country:us/state:wa/government',
+    name: 'Washington',
+    classification: 'state',
+    url: 'https://leg.wa.gov',
+    latest_bill_update: '2025-05-20T10:00:00Z',
+    latest_people_update: '2025-05-19T08:00:00+00:00',
+    legislative_sessions: [
+      {
+        identifier: '2025-2026',
+        name: '2025-2026 Regular Session',
+        classification: 'primary',
+        start_date: '2025-01-13',
+        end_date: '2026-03-12',
+      },
+      {
+        identifier: '2025rs',
+        name: '2025 Regular Session',
+        classification: '',
+        start_date: '2025-01-13',
+        end_date: '',
+      },
+    ],
+    organizations: [
+      {
+        id: 'ocd-organization/1b2c3d4e-0000-4000-8000-000000000001',
+        name: 'Washington State Senate',
+        classification: 'upper',
+      },
+      { name: 'Washington State Legislature' },
+    ],
+    latest_runs: [
+      { start_time: '2025-05-19T02:00:00Z', end_time: '2025-05-19T02:08:00Z', success: true },
+      { start_time: '2025-05-18T02:00:00Z' },
+    ],
+  };
+  type Jurisdiction = typeof jurisdiction;
+  const fixture = {
+    results: [jurisdiction, { ...structuredClone(jurisdiction), name: 'Oregon' }],
+    pagination: { page: 1, per_page: 52, max_page: 1, total_items: 2 },
+  };
+
+  const render = (value: typeof fixture) =>
+    (listJurisdictions.format!(listJurisdictions.output.parse(value))[0]! as { text: string }).text;
+
+  const fields: { path: string; set: (j: Jurisdiction, v: string) => void; oneLine?: boolean }[] = [
+    { path: 'name', set: (j, v) => (j.name = v), oneLine: true },
+    { path: 'id', set: (j, v) => (j.id = v) },
+    { path: 'classification', set: (j, v) => (j.classification = v) },
+    { path: 'latest_bill_update', set: (j, v) => (j.latest_bill_update = v) },
+    { path: 'latest_people_update', set: (j, v) => (j.latest_people_update = v) },
+    {
+      path: 'legislative_sessions[].identifier',
+      set: (j, v) => (j.legislative_sessions[1]!.identifier = v),
+      oneLine: true,
+    },
+    {
+      path: 'legislative_sessions[].name',
+      set: (j, v) => (j.legislative_sessions[1]!.name = v),
+    },
+    {
+      path: 'legislative_sessions[].classification',
+      set: (j, v) => (j.legislative_sessions[1]!.classification = v),
+    },
+    {
+      path: 'legislative_sessions[].start_date',
+      set: (j, v) => (j.legislative_sessions[1]!.start_date = v),
+    },
+    {
+      path: 'legislative_sessions[].end_date',
+      set: (j, v) => (j.legislative_sessions[1]!.end_date = v),
+    },
+    { path: 'organizations[].id', set: (j, v) => (j.organizations[0]!.id = v) },
+    { path: 'organizations[].name', set: (j, v) => (j.organizations[1]!.name = v) },
+    {
+      path: 'organizations[].classification',
+      set: (j, v) => (j.organizations[0]!.classification = v),
+    },
+    { path: 'latest_runs[].start_time', set: (j, v) => (j.latest_runs[1]!.start_time = v) },
+    { path: 'latest_runs[].end_time', set: (j, v) => (j.latest_runs[0]!.end_time = v) },
+  ];
+
+  it.each(fields)('$path reads back exactly for every hostile class', ({ set, oneLine }) => {
+    const benign = structuredClone(fixture);
+    set(benign.results[1]!, 'plain value');
+    const expected = shape(render(benign));
+    for (const value of oneLine ? HOSTILE_VALUES : [...HOSTILE_VALUES, ...MULTILINE_VALUES]) {
+      const f = structuredClone(fixture);
+      set(f.results[1]!, value);
+      const text = render(f);
+      expect({ value, shape: shape(text) }).toEqual({ value, shape: expected });
+      expect(
+        readBack(text).some((block) => block.includes(value)),
+        value,
+      ).toBe(true);
+    }
+  });
+
+  it('keeps a session identifier a code literal that reads back exactly, backticks included', () => {
+    for (const identifier of ['2025rs', '20`25', '`2025`', ' 2025 ']) {
+      const f = structuredClone(fixture);
+      f.results[1]!.legislative_sessions[0]!.identifier = identifier;
+      const codes = inlineTokens(render(f)).filter((t) => t.type === 'code_inline');
+      expect(codes[2]?.content).toBe(identifier);
+    }
+  });
+
+  it('renders each url as one link whose href is the URL and whose label reads back as it', () => {
+    const hostile = 'https://example.org/a b/(c)?q=<x>&amp;[y]';
+    const f = structuredClone(fixture);
+    f.results[1]!.url = hostile;
+    expect(links(render(f))).toEqual([
+      { href: normalizeLink('https://leg.wa.gov'), label: 'https://leg.wa.gov' },
+      { href: normalizeLink(hostile), label: hostile },
+    ]);
+  });
+
+  it('renders a non-http(s) url as literal text with no link token', () => {
+    const f = structuredClone(fixture);
+    f.results[1]!.url = 'javascript:alert(1)';
+    const text = render(f);
+    expect(links(text).map((l) => l.href)).toEqual([normalizeLink('https://leg.wa.gov')]);
+    expect(readBack(text).some((block) => block.includes('javascript:alert(1)'))).toBe(true);
+  });
+
+  /** Characterization: every line carrying no URL field is byte-identical to the pre-#53 output. */
+  it('renders real-shaped values byte-identical outside the URL lines', () => {
+    const text = render({
+      ...fixture,
+      results: [jurisdiction],
+      pagination: { ...fixture.pagination, total_items: 1 },
+    });
+    expect(text.split('\n').filter((line) => !line.includes('https://'))).toEqual([
+      '**1 jurisdictions** (page 1/1, per page 52)',
+      '',
+      '## Washington',
+      '**ID:** ocd-jurisdiction/country:us/state:wa/government',
+      '**Classification:** state',
+      '**Latest bill update:** 2025-05-20T10:00:00Z',
+      '**Latest people update:** 2025-05-19T08:00:00+00:00',
+      '',
+      '**Legislative sessions:**',
+      '- `2025-2026` — 2025-2026 Regular Session (primary) 2025-01-13–2026-03-12',
+      '- `2025rs` — 2025 Regular Session from 2025-01-13',
+      '',
+      '**Organizations:**',
+      '- Washington State Senate (upper) — ocd-organization/1b2c3d4e-0000-4000-8000-000000000001',
+      '- Washington State Legislature',
+      '',
+      '**Latest runs:**',
+      '- 2025-05-19T02:00:00Z → 2025-05-19T02:08:00Z (success: true)',
+      '- 2025-05-18T02:00:00Z (success: n/a)',
+    ]);
   });
 });

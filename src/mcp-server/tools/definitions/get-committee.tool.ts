@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const CommitteeIncludeEnum = z.enum(['memberships', 'links', 'sources']);
@@ -103,6 +104,15 @@ export const getCommittee = tool('openstates_get_committee', {
       // handler never sees the expiry it would need to throw on.
       thrownBy: 'service',
     },
+    {
+      reason: 'rate_limited',
+      code: JsonRpcErrorCode.RateLimited,
+      when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+      recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+      retryable: true,
+      // Raised by the service, which reads the cap from the 429 body or its own daily-budget guard.
+      thrownBy: 'service',
+    },
   ],
 
   async handler(input, ctx) {
@@ -132,32 +142,31 @@ export const getCommittee = tool('openstates_get_committee', {
   },
 
   format: (result) => {
+    const e = escapeMarkdownInline;
     const lines: string[] = [
-      `# ${result.name}`,
-      `**ID:** ${result.id}`,
-      `**Classification:** ${result.classification}`,
+      `# ${e(result.name)}`,
+      `**ID:** ${e(result.id)}`,
+      `**Classification:** ${e(result.classification)}`,
     ];
-    if (result.parent_id) lines.push(`**Parent ID:** ${result.parent_id}`);
+    if (result.parent_id) lines.push(`**Parent ID:** ${e(result.parent_id)}`);
     if (result.memberships?.length) {
       lines.push('');
       lines.push('## Members');
       for (const m of result.memberships) {
-        lines.push(`- ${m.person_name} (${m.role}) — ID: ${m.person_id}`);
+        const role = m.role ? ` (${e(m.role)})` : '';
+        const id = m.person_id ? ` — ID: ${e(m.person_id)}` : '';
+        lines.push(`- ${e(m.person_name)}${role}${id}`);
       }
     }
     if (result.links?.length) {
       lines.push('');
       lines.push('## Links');
-      for (const l of result.links) {
-        lines.push(l.note ? `- ${l.note}: ${l.url}` : `- ${l.url}`);
-      }
+      for (const l of result.links) lines.push(`- ${markdownLink(l.note || l.url, l.url)}`);
     }
     if (result.sources?.length) {
       lines.push('');
       lines.push('## Sources');
-      for (const s of result.sources) {
-        lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
-      }
+      for (const s of result.sources) lines.push(`- ${markdownLink(s.note || s.url, s.url)}`);
     }
     return [{ type: 'text', text: lines.join('\n') }];
   },

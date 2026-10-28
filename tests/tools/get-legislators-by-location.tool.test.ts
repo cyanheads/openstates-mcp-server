@@ -3,7 +3,8 @@
  * @module tests/tools/get-legislators-by-location.tool.test
  */
 
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getLegislatorsByLocation } from '@/mcp-server/tools/definitions/get-legislators-by-location.tool.js';
 
@@ -185,6 +186,41 @@ describe('getLegislatorsByLocation', () => {
     const blocks = getLegislatorsByLocation.format!(result);
     const text = (blocks[0]! as { text: string }).text;
     expect(text).toContain('0 legislators found');
+  });
+
+  /** Issue #51 wiring: a service `rate_limited` failure surfaces with this tool's declared recovery. */
+  it('surfaces a service RateLimited error with the declared recovery hint', async () => {
+    mockService.getPeopleByGeo.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.RateLimited, 'exceeded limit of 10/min: 11', {
+        reason: 'rate_limited',
+        retryable: true,
+        retryAfter: 37,
+      }),
+    );
+    const declared = getLegislatorsByLocation.errors?.find((e) => e.reason === 'rate_limited');
+    expect(declared?.recovery).toBe(
+      'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+    );
+
+    const result = await runToolContract(getLegislatorsByLocation, {
+      latitude: 47.6062,
+      longitude: -122.3321,
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: JsonRpcErrorCode.RateLimited,
+          data: {
+            reason: 'rate_limited',
+            retryable: true,
+            retryAfter: 37,
+            recovery: { hint: declared?.recovery },
+          },
+        },
+      },
+    });
   });
 
   /**

@@ -142,13 +142,11 @@ export interface BillListResponse {
 
 /**
  * Accepted values of the upstream `/people` `org_classification` filter (the API's own
- * `OrgClassification` enum). `legislature` is accepted input but is never any person's
- * current role — the service resolves it to the `upper` + `lower` union.
+ * `OrgClassification` enum). Upstream `legislature` matches only members of unicameral bodies
+ * (Nebraska, the DC Council); the service resolves it to the `upper` + `lower` + `legislature`
+ * union so it covers every legislator.
  */
 export type OrgClassification = 'legislature' | 'executive' | 'lower' | 'upper' | 'government';
-
-/** The chambers whose union the `legislature` classification resolves to. */
-export type Chamber = Extract<OrgClassification, 'lower' | 'upper'>;
 
 export interface PersonRole {
   district: string | null;
@@ -275,17 +273,39 @@ export interface AgendaItem {
   subjects: string[];
 }
 
+/** One URL on an event media or document record. Open States usually sends `url` alone. */
+export interface EventAttachmentLink {
+  note?: string;
+  url: string;
+}
+
+/**
+ * Open States `EventDocument`: the URLs sit in `links[]`, not on the record. `date` and
+ * `classification` arrive as `""` when unrecorded.
+ */
+export interface EventDocument {
+  classification: string;
+  date: string;
+  links: EventAttachmentLink[];
+  note: string;
+}
+
+/** Open States `EventMedia`: an `EventDocument` plus an optional start offset into the recording. */
+export interface EventMedia extends EventDocument {
+  offset?: number;
+}
+
 export interface Event {
   agenda?: AgendaItem[];
   classification: string;
   description: string;
-  documents?: PersonLink[];
+  documents?: EventDocument[];
   end_date: string | undefined;
   id: string;
   jurisdiction: CompactJurisdiction;
   links?: PersonLink[];
   location?: EventLocation;
-  media?: PersonLink[];
+  media?: EventMedia[];
   name: string;
   participants?: EventParticipant[];
   sources?: Array<{ url: string; note: string }>;

@@ -98,7 +98,13 @@ const COMMITTEE_FIELDS = [
   'links[].note',
   'sources[].note',
 ];
-const EVENT_FIELDS = ['links[].note', 'media[].note', 'documents[].note', 'sources[].note'];
+const EVENT_FIELDS = [
+  'links[].note',
+  'sources[].note',
+  ...['media', 'documents'].flatMap((list) =>
+    ['note', 'date', 'classification'].map((field) => `${list}[].${field}`),
+  ),
+];
 
 const prefixed = (prefix: string, fields: string[]) => fields.map((field) => `${prefix}${field}`);
 

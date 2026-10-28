@@ -12,6 +12,9 @@ vi.mock('@/services/openstates/openstates-service.js', async (importOriginal) =>
   getOpenStatesApiService: vi.fn(),
 }));
 
+/** A real-shaped OCD bill ID — the handler rejects any `openstates_id` not shaped like one. */
+const BILL_ID = 'ocd-bill/4f255ccf-42a6-46ad-bbc6-0b027ebb15f2';
+
 const mockBill = {
   id: 'ocd-bill/12345',
   identifier: 'HB 1000',
@@ -48,11 +51,11 @@ describe('getBill', () => {
 
   it('fetches bill by openstates_id', async () => {
     const ctx = createMockContext({ errors: getBill.errors });
-    const input = getBill.input.parse({ openstates_id: 'ocd-bill/12345' });
+    const input = getBill.input.parse({ openstates_id: BILL_ID });
     const result = await getBill.handler(input, ctx);
     expect(result.id).toBe('ocd-bill/12345');
     expect(result.identifier).toBe('HB 1000');
-    expect(mockService.getBillById).toHaveBeenCalledWith('ocd-bill/12345', undefined, ctx);
+    expect(mockService.getBillById).toHaveBeenCalledWith(BILL_ID, undefined, ctx);
   });
 
   it('fetches bill by path (jurisdiction + session + bill_id)', async () => {
@@ -104,8 +107,9 @@ describe('getBill', () => {
     mockService.getBillById.mockResolvedValue(billWithVotes);
 
     const ctx = createMockContext({ errors: getBill.errors });
-    const input = getBill.input.parse({ openstates_id: 'ocd-bill/12345', include: ['votes'] });
+    const input = getBill.input.parse({ openstates_id: BILL_ID, include: ['votes'] });
     const result = await getBill.handler(input, ctx);
+    expect(mockService.getBillById).toHaveBeenCalledWith(BILL_ID, ['votes'], ctx);
     expect(result.votes).toBeDefined();
     expect(result.votes?.[0]?.result).toBe('pass');
   });
@@ -178,7 +182,7 @@ describe('getBill', () => {
     it('keeps updated_at in structuredContent', async () => {
       mockService.getBillById.mockResolvedValue(billWithTimestamp);
       const ctx = createMockContext({ errors: getBill.errors });
-      const input = getBill.input.parse({ openstates_id: 'ocd-bill/12345' });
+      const input = getBill.input.parse({ openstates_id: BILL_ID });
       const structured = getBill.output.parse(await getBill.handler(input, ctx));
       expect(structured.updated_at).toBe('2026-07-15T12:02:32Z');
     });

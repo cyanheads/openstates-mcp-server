@@ -3,9 +3,12 @@
  * @module tests/tools/get-jurisdiction.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getJurisdiction } from '@/mcp-server/tools/definitions/get-jurisdiction.tool.js';
+import { inlineTokens, links, normalizeLink, readBack } from '../helpers/commonmark.js';
+import { HOSTILE_VALUES, MULTILINE_VALUES, shape } from '../helpers/markdown-sweep.js';
 
 vi.mock('@/services/openstates/openstates-service.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/openstates/openstates-service.js')>()),
@@ -238,5 +241,200 @@ describe('getJurisdiction — sessions with an empty classification or date (iss
     });
     expect(text.split('\n')).toContain('- `27` — 27th Legislature (2011-2012) until 2012-04-15');
     expect(text).not.toContain('()');
+  });
+});
+
+/**
+ * Issue #53: every upstream string in `format()` reads back exactly from a CommonMark parse. A
+ * value is set to each hostile class in turn; it must appear verbatim in the read-back text and
+ * leave the block structure and the non-text inline tokens exactly as the benign value did — no
+ * emphasis, link, image, raw HTML, heading, list, or quote of its own.
+ */
+describe('getJurisdiction — format() Markdown fidelity (issue #53)', () => {
+  const fixture = {
+    id: 'ocd-jurisdiction/country:us/state:wa/government',
+    name: 'Washington',
+    classification: 'state',
+    url: 'https://leg.wa.gov',
+    latest_bill_update: '2025-05-20T10:00:00Z',
+    latest_people_update: '2025-05-19T08:00:00+00:00',
+    legislative_sessions: [
+      {
+        identifier: '2025-2026',
+        name: '2025-2026 Regular Session',
+        classification: 'primary',
+        start_date: '2025-01-13',
+        end_date: '2026-03-12',
+      },
+      {
+        identifier: '2025rs',
+        name: '2025 Regular Session',
+        classification: '',
+        start_date: '2025-01-13',
+        end_date: '',
+      },
+      {
+        identifier: '2025s1',
+        name: '2025 Special Session 1',
+        classification: 'special',
+        start_date: '',
+        end_date: '',
+      },
+    ],
+    organizations: [
+      {
+        id: 'ocd-organization/1b2c3d4e-0000-4000-8000-000000000001',
+        name: 'Washington State Senate',
+        classification: 'upper',
+      },
+      { name: 'Washington State Legislature' },
+    ],
+    latest_runs: [
+      { start_time: '2025-05-19T02:00:00Z', end_time: '2025-05-19T02:08:00Z', success: true },
+      { start_time: '2025-05-18T02:00:00Z' },
+    ],
+  };
+  type Fixture = typeof fixture;
+
+  const render = (value: Fixture) =>
+    (getJurisdiction.format!(getJurisdiction.output.parse(value))[0]! as { text: string }).text;
+
+  /** One-line hostile classes; every slot gets these. */
+  const fields: { path: string; set: (f: Fixture, v: string) => void; oneLine?: boolean }[] = [
+    { path: 'name', set: (f, v) => (f.name = v), oneLine: true },
+    { path: 'id', set: (f, v) => (f.id = v) },
+    { path: 'classification', set: (f, v) => (f.classification = v) },
+    { path: 'latest_bill_update', set: (f, v) => (f.latest_bill_update = v) },
+    { path: 'latest_people_update', set: (f, v) => (f.latest_people_update = v) },
+    {
+      path: 'legislative_sessions[].identifier',
+      set: (f, v) => (f.legislative_sessions[0]!.identifier = v),
+      oneLine: true,
+    },
+    { path: 'legislative_sessions[].name', set: (f, v) => (f.legislative_sessions[0]!.name = v) },
+    {
+      path: 'legislative_sessions[].classification',
+      set: (f, v) => (f.legislative_sessions[0]!.classification = v),
+    },
+    {
+      path: 'legislative_sessions[].start_date',
+      set: (f, v) => (f.legislative_sessions[0]!.start_date = v),
+    },
+    {
+      path: 'legislative_sessions[].end_date',
+      set: (f, v) => (f.legislative_sessions[0]!.end_date = v),
+    },
+    { path: 'organizations[].id', set: (f, v) => (f.organizations[0]!.id = v) },
+    { path: 'organizations[].name', set: (f, v) => (f.organizations[0]!.name = v) },
+    {
+      path: 'organizations[].classification',
+      set: (f, v) => (f.organizations[0]!.classification = v),
+    },
+    { path: 'latest_runs[].start_time', set: (f, v) => (f.latest_runs[0]!.start_time = v) },
+    { path: 'latest_runs[].end_time', set: (f, v) => (f.latest_runs[0]!.end_time = v) },
+  ];
+
+  it.each(fields)('$path reads back exactly for every hostile class', ({ set, oneLine }) => {
+    const benign = structuredClone(fixture);
+    set(benign, 'plain value');
+    const expected = shape(render(benign));
+    for (const value of oneLine ? HOSTILE_VALUES : [...HOSTILE_VALUES, ...MULTILINE_VALUES]) {
+      const f = structuredClone(fixture);
+      set(f, value);
+      const text = render(f);
+      expect({ value, shape: shape(text) }).toEqual({ value, shape: expected });
+      expect(
+        readBack(text).some((block) => block.includes(value)),
+        value,
+      ).toBe(true);
+    }
+  });
+
+  it('keeps a session identifier a code literal that reads back exactly, backticks included', () => {
+    for (const identifier of ['2025rs', '20`25', '`2025`', ' 2025 ']) {
+      const f = structuredClone(fixture);
+      f.legislative_sessions[0]!.identifier = identifier;
+      const codes = inlineTokens(render(f)).filter((t) => t.type === 'code_inline');
+      expect(codes[0]?.content).toBe(identifier);
+    }
+  });
+
+  it('renders url as one link whose href is the URL and whose label reads back as it', () => {
+    for (const url of ['https://leg.wa.gov', 'https://example.org/a b/(c)?q=<x>&amp;[y]']) {
+      const text = render({ ...fixture, url });
+      expect(links(text)).toEqual([{ href: normalizeLink(url), label: url }]);
+    }
+  });
+
+  it('renders a non-http(s) url as literal text with no link token', () => {
+    const url = 'javascript:alert(1)';
+    const text = render({ ...fixture, url });
+    expect(links(text)).toEqual([]);
+    expect(readBack(text).some((block) => block.includes(url))).toBe(true);
+  });
+
+  /** Characterization: every line carrying no URL field is byte-identical to the pre-#53 output. */
+  it('renders real-shaped values byte-identical outside the URL line', () => {
+    expect(
+      render(fixture)
+        .split('\n')
+        .filter((line) => !line.includes('https://')),
+    ).toEqual([
+      '# Washington',
+      '**ID:** ocd-jurisdiction/country:us/state:wa/government',
+      '**Classification:** state',
+      '**Latest bill update:** 2025-05-20T10:00:00Z',
+      '**Latest people update:** 2025-05-19T08:00:00+00:00',
+      '',
+      '## Legislative Sessions',
+      '- `2025-2026` — 2025-2026 Regular Session (primary) 2025-01-13–2026-03-12',
+      '- `2025rs` — 2025 Regular Session from 2025-01-13',
+      '- `2025s1` — 2025 Special Session 1 (special)',
+      '',
+      '## Organizations',
+      '- Washington State Senate (upper) — ocd-organization/1b2c3d4e-0000-4000-8000-000000000001',
+      '- Washington State Legislature',
+      '',
+      '## Latest Runs',
+      '- 2025-05-19T02:00:00Z → 2025-05-19T02:08:00Z (success: true)',
+      '- 2025-05-18T02:00:00Z (success: n/a)',
+    ]);
+  });
+});
+
+/** Issue #51 wiring: a service `rate_limited` failure surfaces with this tool's declared recovery. */
+describe('getJurisdiction — rate_limited contract (issue #51)', () => {
+  it('surfaces a service RateLimited error with the declared recovery hint', async () => {
+    const { getOpenStatesApiService } = await import('@/services/openstates/openstates-service.js');
+    vi.mocked(getOpenStatesApiService).mockReturnValue({
+      getJurisdiction: vi.fn().mockRejectedValue(
+        new McpError(JsonRpcErrorCode.RateLimited, 'exceeded limit of 10/min: 11', {
+          reason: 'rate_limited',
+          retryable: true,
+          retryAfter: 37,
+        }),
+      ),
+    } as never);
+    const declared = getJurisdiction.errors?.find((e) => e.reason === 'rate_limited');
+    expect(declared?.recovery).toBe(
+      'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+    );
+
+    const result = await runToolContract(getJurisdiction, { jurisdiction_id: 'wa' });
+
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        error: {
+          code: JsonRpcErrorCode.RateLimited,
+          data: {
+            reason: 'rate_limited',
+            retryable: true,
+            retryAfter: 37,
+            recovery: { hint: declared?.recovery },
+          },
+        },
+      },
+    });
   });
 });

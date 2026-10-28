@@ -5,7 +5,71 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline as esc, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
+
+/**
+ * The UUID half of an OCD bill ID, 8-4-4-4-12 hex. Fully anchored and fixed-width, and tested
+ * only against a segment already checked to be 36 characters, so its cost is bounded regardless
+ * of input size.
+ */
+const BILL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The canonical form of a caller's `openstates_id`, or `undefined` when it cannot name a bill.
+ *
+ * The value resolves into a request path the way the service's URL builder resolves it — WHATWG
+ * parsing strips tab/CR/LF, resolves dot segments, and splits off `?…` and `#…` — and the path is
+ * percent-decoded once, as upstream decodes it before routing. Every form that reached a bill
+ * before therefore still does. What remains must be one of the two bill-detail routes:
+ * `ocd-bill/<uuid>` (case-insensitive, returned lowercase, since upstream's record lookup is
+ * case-sensitive) or `<jurisdiction>/<session>/<bill_id>`, each with an optional trailing `/`.
+ * Decoding can reintroduce `.`/`..` segments the URL parser never saw, so those are refused rather
+ * than handed to the service to resolve.
+ */
+function canonicalBillId(openstatesId: string): string | undefined {
+  const pathname = URL.parse(`https://openstates.invalid/bills/${openstatesId}`)?.pathname;
+  if (pathname === undefined) return;
+  let path: string;
+  try {
+    path = decodeURIComponent(pathname);
+  } catch {
+    return; // A malformed percent escape names no route.
+  }
+  if (!path.startsWith('/bills/')) return;
+  const rest = path.slice('/bills/'.length);
+  const segments = (rest.endsWith('/') ? rest.slice(0, -1) : rest).split('/');
+  const [first = '', second = ''] = segments;
+  const isOcdPrefix = first.toLowerCase() === 'ocd-bill';
+  if (segments.length === 2 && isOcdPrefix && second.length === 36 && BILL_UUID.test(second)) {
+    return `ocd-bill/${second.toLowerCase()}`;
+  }
+  if (
+    segments.length === 3 &&
+    !isOcdPrefix &&
+    segments.every((s) => s !== '' && s !== '.' && s !== '..')
+  ) {
+    return segments.join('/');
+  }
+  return;
+}
+
+/**
+ * One bill version or document line: the id in literal brackets, the note and date when present,
+ * then each link labeled by its media type. The brackets are escaped because with no note or date
+ * the line reads `[id]: <link>`, which CommonMark takes as a link reference definition and drops.
+ */
+function textRecordLine(record: {
+  id: string;
+  note: string;
+  date: string;
+  links: { url: string; media_type: string }[];
+}): string {
+  const links = record.links.map((l) => markdownLink(l.media_type || l.url, l.url)).join(', ');
+  const note = record.note ? ` ${esc(record.note)}` : '';
+  const date = record.date ? ` (${esc(record.date)})` : '';
+  return `- \\[${esc(record.id)}\\]${note}${date}: ${links}`;
+}
 
 const BillIncludeEnum = z.enum([
   'sponsorships',
@@ -30,7 +94,7 @@ export const getBill = tool('openstates_get_bill', {
       .string()
       .optional()
       .describe(
-        'OCD bill ID from openstates_search_bills results (e.g., "ocd-bill/..."). Preferred over the three-part path when available.',
+        'OCD bill ID from openstates_search_bills results: "ocd-bill/" followed by a UUID (e.g., "ocd-bill/4f255ccf-42a6-46ad-bbc6-0b027ebb15f2"). Preferred over the three-part path when available.',
       ),
     jurisdiction: z
       .string()
@@ -310,11 +374,18 @@ export const getBill = tool('openstates_get_bill', {
         'Provide either openstates_id (from openstates_search_bills results) or all three of: jurisdiction, session, and bill_id.',
     },
     {
+      reason: 'invalid_openstates_id',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'openstates_id is not an Open States bill ID — neither "ocd-bill/" followed by a UUID nor a jurisdiction/session/bill_id path.',
+      recovery:
+        'Copy the id field ("ocd-bill/" followed by a UUID) from an openstates_search_bills result and pass it unchanged, or look the bill up with jurisdiction, session, and bill_id instead.',
+    },
+    {
       reason: 'not_found',
       code: JsonRpcErrorCode.NotFound,
-      when: 'Bill does not exist at the given path or OCD ID.',
+      when: 'No bill exists at the given OCD bill ID or jurisdiction + session + bill_id path.',
       recovery:
-        'Verify the session identifier with openstates_get_jurisdiction and confirm the bill_id format matches the legislature convention (e.g., "HB 1000" not "HB1000").',
+        'Find the bill with openstates_search_bills and pass its id as openstates_id. For a jurisdiction + session + bill_id lookup, also confirm the session identifier with openstates_get_jurisdiction (include=legislative_sessions).',
     },
     {
       reason: 'upstream_timeout',
@@ -326,11 +397,30 @@ export const getBill = tool('openstates_get_bill', {
       // handler never sees the expiry it would need to throw on.
       thrownBy: 'service',
     },
+    {
+      reason: 'rate_limited',
+      code: JsonRpcErrorCode.RateLimited,
+      when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+      recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+      retryable: true,
+      // Raised by the service, which reads the cap from the 429 body or its own daily-budget guard.
+      thrownBy: 'service',
+    },
   ],
 
   async handler(input, ctx) {
-    const lookup = input.openstates_id
-      ? ({ kind: 'id', openstatesId: input.openstates_id } as const)
+    // Blank means omitted, so a whitespace-only id falls through to the path triple.
+    const rawId = input.openstates_id?.trim();
+    const openstatesId = rawId ? canonicalBillId(rawId) : undefined;
+    if (rawId && openstatesId === undefined) {
+      throw ctx.fail(
+        'invalid_openstates_id',
+        'The openstates_id value is not an Open States bill ID. Bill IDs are "ocd-bill/" followed by a UUID — copy one from an openstates_search_bills result.',
+      );
+    }
+
+    const lookup = openstatesId
+      ? ({ kind: 'id', openstatesId } as const)
       : input.jurisdiction && input.session && input.bill_id
         ? ({
             kind: 'path',
@@ -355,7 +445,10 @@ export const getBill = tool('openstates_get_bill', {
       : svc.getBillByPath(lookup.jurisdiction, lookup.session, lookup.billId, include, ctx)
     ).catch((err: unknown) => {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
-        const id = input.openstates_id ?? `${input.jurisdiction}/${input.session}/${input.bill_id}`;
+        const id =
+          lookup.kind === 'id'
+            ? lookup.openstatesId
+            : `${lookup.jurisdiction}/${lookup.session}/${lookup.billId}`;
         throw ctx.fail('not_found', `Bill not found: ${id}`);
       }
       throw err;
@@ -365,31 +458,39 @@ export const getBill = tool('openstates_get_bill', {
     return bill;
   },
 
+  /**
+   * Every upstream string goes through `esc` (`escapeMarkdownInline`) and every URL field through
+   * `markdownLink`, labeled by the record's own note or media type when it has one, so a
+   * CommonMark parse of `content[]` reads back the values `structuredContent` carries.
+   */
   format: (result) => {
     const lines: string[] = [
-      `# ${result.identifier} — ${result.title}`,
-      `**ID:** ${result.id}`,
-      `**Session:** ${result.session} | **Jurisdiction:** ${result.jurisdiction.name} (${result.jurisdiction.id})`,
-      `**Chamber:** ${result.from_organization.name} (${result.from_organization.classification})`,
+      `# ${esc(result.identifier)} — ${esc(result.title)}`,
+      `**ID:** ${esc(result.id)}`,
+      `**Session:** ${esc(result.session)} | **Jurisdiction:** ${esc(result.jurisdiction.name)} (${esc(result.jurisdiction.id)})`,
+      `**Chamber:** ${esc(result.from_organization.name)} (${esc(result.from_organization.classification)})`,
     ];
     if (result.classification.length > 0)
-      lines.push(`**Classification:** ${result.classification.join(', ')}`);
-    if (result.subject.length > 0) lines.push(`**Subjects:** ${result.subject.join(', ')}`);
-    if (result.first_action_date) lines.push(`**First action:** ${result.first_action_date}`);
+      lines.push(`**Classification:** ${result.classification.map(esc).join(', ')}`);
+    if (result.subject.length > 0)
+      lines.push(`**Subjects:** ${result.subject.map(esc).join(', ')}`);
+    if (result.first_action_date) lines.push(`**First action:** ${esc(result.first_action_date)}`);
     if (result.latest_action_date) {
-      lines.push(
-        `**Latest action:** ${result.latest_action_date} — ${result.latest_action_description ?? 'N/A'}`,
-      );
+      const description =
+        result.latest_action_description === null ? 'N/A' : esc(result.latest_action_description);
+      lines.push(`**Latest action:** ${esc(result.latest_action_date)} — ${description}`);
     }
-    if (result.latest_passage_date) lines.push(`**Passed:** ${result.latest_passage_date}`);
-    if (result.updated_at) lines.push(`**Updated:** ${result.updated_at}`);
-    if (result.openstates_url) lines.push(`**URL:** ${result.openstates_url}`);
+    if (result.latest_passage_date) lines.push(`**Passed:** ${esc(result.latest_passage_date)}`);
+    if (result.updated_at) lines.push(`**Updated:** ${esc(result.updated_at)}`);
+    if (result.openstates_url) {
+      lines.push(`**URL:** ${markdownLink(result.openstates_url, result.openstates_url)}`);
+    }
 
     if (result.abstracts?.length) {
       lines.push('');
       lines.push('## Summary');
       for (const abs of result.abstracts) {
-        lines.push(`${abs.abstract}${abs.note ? ` _(${abs.note})_` : ''}`);
+        lines.push(`${esc(abs.abstract)}${abs.note ? ` _(${esc(abs.note)})_` : ''}`);
       }
     }
 
@@ -398,8 +499,10 @@ export const getBill = tool('openstates_get_bill', {
       lines.push('## Sponsors');
       for (const s of result.sponsorships) {
         const marker = s.primary ? '**Primary**' : 'Cosponsor';
-        const person = s.person ? ` [person: ${s.person.name} (${s.person.id})]` : '';
-        lines.push(`- ${marker}: ${s.name} (${s.classification}, ${s.entity_type})${person}`);
+        const person = s.person ? ` [person: ${esc(s.person.name)} (${esc(s.person.id)})]` : '';
+        lines.push(
+          `- ${marker}: ${esc(s.name)} (${esc(s.classification)}, ${esc(s.entity_type)})${person}`,
+        );
       }
     }
 
@@ -407,9 +510,9 @@ export const getBill = tool('openstates_get_bill', {
       lines.push('');
       lines.push('## Action History');
       for (const a of result.actions) {
-        const cls = a.classification.length > 0 ? ` [${a.classification.join(', ')}]` : '';
+        const cls = a.classification.length > 0 ? ` [${a.classification.map(esc).join(', ')}]` : '';
         lines.push(
-          `- #${a.order}${a.date ? ` ${a.date}` : ''}: ${a.description}${cls} — ${a.organization.name} (${a.organization.classification})`,
+          `- #${a.order}${a.date ? ` ${esc(a.date)}` : ''}: ${esc(a.description)}${cls} — ${esc(a.organization.name)} (${esc(a.organization.classification)})`,
         );
       }
     }
@@ -418,15 +521,19 @@ export const getBill = tool('openstates_get_bill', {
       lines.push('');
       lines.push('## Votes');
       for (const v of result.votes) {
-        lines.push(`### ${v.motion_text}${v.start_date ? ` (${v.start_date})` : ''}`);
-        lines.push(`**Result:** ${v.result} | **ID:** ${v.id} | **Identifier:** ${v.identifier}`);
-        const counts = v.counts.map((c) => `${c.option}: ${c.value}`).join(', ');
+        lines.push(`### ${esc(v.motion_text)}${v.start_date ? ` (${esc(v.start_date)})` : ''}`);
+        lines.push(
+          `**Result:** ${esc(v.result)} | **ID:** ${esc(v.id)} | **Identifier:** ${esc(v.identifier)}`,
+        );
+        const counts = v.counts.map((c) => `${esc(c.option)}: ${c.value}`).join(', ');
         lines.push(`**Tally:** ${counts}`);
         if (v.votes.length > 0) {
           lines.push('**Individual votes:**');
           for (const pv of v.votes) {
-            const voterLink = pv.voter ? ` (ID: ${pv.voter.id}, name: ${pv.voter.name})` : '';
-            lines.push(`- ${pv.voter_name}${voterLink}: ${pv.option}`);
+            const voterLink = pv.voter
+              ? ` (ID: ${esc(pv.voter.id)}, name: ${esc(pv.voter.name)})`
+              : '';
+            lines.push(`- ${esc(pv.voter_name)}${voterLink}: ${esc(pv.option)}`);
           }
         }
       }
@@ -435,28 +542,22 @@ export const getBill = tool('openstates_get_bill', {
     if (result.versions?.length) {
       lines.push('');
       lines.push('## Bill Text Versions');
-      for (const v of result.versions) {
-        lines.push(
-          `- [${v.id}]${v.note ? ` ${v.note}` : ''}${v.date ? ` (${v.date})` : ''}: ${v.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
-        );
-      }
+      for (const v of result.versions) lines.push(textRecordLine(v));
     }
 
     if (result.documents?.length) {
       lines.push('');
       lines.push('## Documents');
-      for (const d of result.documents) {
-        lines.push(
-          `- [${d.id}]${d.note ? ` ${d.note}` : ''}${d.date ? ` (${d.date})` : ''}: ${d.links.map((l) => `${l.url} [${l.media_type}]`).join(', ')}`,
-        );
-      }
+      for (const d of result.documents) lines.push(textRecordLine(d));
     }
 
     if (result.related_bills?.length) {
       lines.push('');
       lines.push('## Related Bills');
       for (const r of result.related_bills) {
-        lines.push(`- ${r.identifier} (${r.legislative_session}) — ${r.relation_type}`);
+        lines.push(
+          `- ${esc(r.identifier)} (${esc(r.legislative_session)}) — ${esc(r.relation_type)}`,
+        );
       }
     }
 
@@ -464,7 +565,7 @@ export const getBill = tool('openstates_get_bill', {
       lines.push('');
       lines.push('## Other Titles');
       for (const t of result.other_titles) {
-        lines.push(`- ${t.title}${t.note ? ` _(${t.note})_` : ''}`);
+        lines.push(`- ${esc(t.title)}${t.note ? ` _(${esc(t.note)})_` : ''}`);
       }
     }
 
@@ -472,16 +573,14 @@ export const getBill = tool('openstates_get_bill', {
       lines.push('');
       lines.push('## Other Identifiers');
       for (const oi of result.other_identifiers) {
-        lines.push(`- ${oi.identifier}${oi.scheme ? ` (${oi.scheme})` : ''}`);
+        lines.push(`- ${esc(oi.identifier)}${oi.scheme ? ` (${esc(oi.scheme)})` : ''}`);
       }
     }
 
     if (result.sources?.length) {
       lines.push('');
       lines.push('## Sources');
-      for (const s of result.sources) {
-        lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
-      }
+      for (const s of result.sources) lines.push(`- ${markdownLink(s.note || s.url, s.url)}`);
     }
 
     return [{ type: 'text', text: lines.join('\n') }];

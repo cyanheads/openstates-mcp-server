@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdown, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const JurisdictionIncludeEnum = z.enum(['organizations', 'legislative_sessions', 'latest_runs']);
@@ -122,6 +123,15 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
       // handler never sees the expiry it would need to throw on.
       thrownBy: 'service',
     },
+    {
+      reason: 'rate_limited',
+      code: JsonRpcErrorCode.RateLimited,
+      when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+      recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+      retryable: true,
+      // Raised by the service, which reads the cap from the 429 body or its own daily-budget guard.
+      thrownBy: 'service',
+    },
   ],
 
   async handler(input, ctx) {
@@ -152,14 +162,19 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
     };
   },
 
+  /**
+   * Every upstream string goes through an encoder so a CommonMark parse reads it back as written:
+   * `escapeMarkdownInline` for text, `markdownLink` for the URL, and a code span for the session
+   * identifier — the value callers copy into `session=`, so it carries no backslashes.
+   */
   format: (result) => {
     const lines: string[] = [
-      `# ${result.name}`,
-      `**ID:** ${result.id}`,
-      `**Classification:** ${result.classification}`,
-      `**URL:** ${result.url}`,
-      `**Latest bill update:** ${result.latest_bill_update}`,
-      `**Latest people update:** ${result.latest_people_update}`,
+      `# ${escapeMarkdownInline(result.name)}`,
+      `**ID:** ${escapeMarkdownInline(result.id)}`,
+      `**Classification:** ${escapeMarkdownInline(result.classification)}`,
+      `**URL:** ${markdownLink(result.url, result.url)}`,
+      `**Latest bill update:** ${escapeMarkdownInline(result.latest_bill_update)}`,
+      `**Latest people update:** ${escapeMarkdownInline(result.latest_people_update)}`,
     ];
     if (result.legislative_sessions?.length) {
       lines.push('');
@@ -171,33 +186,33 @@ export const getJurisdiction = tool('openstates_get_jurisdiction', {
          * unknown, not open-ended — every observed case is a long-concluded session — so nothing
          * here substitutes "present" for an absent date.
          */
-        const cls = s.classification ? ` (${s.classification})` : '';
+        const cls = s.classification ? ` (${escapeMarkdownInline(s.classification)})` : '';
+        const start = escapeMarkdownInline(s.start_date);
+        const end = escapeMarkdownInline(s.end_date);
         const range =
-          s.start_date && s.end_date
-            ? ` ${s.start_date}–${s.end_date}`
-            : s.start_date
-              ? ` from ${s.start_date}`
-              : s.end_date
-                ? ` until ${s.end_date}`
-                : '';
-        lines.push(`- \`${s.identifier}\` — ${s.name}${cls}${range}`);
+          start && end ? ` ${start}–${end}` : start ? ` from ${start}` : end ? ` until ${end}` : '';
+        const identifier = markdown().inlineCode(s.identifier).build();
+        lines.push(`- ${identifier} — ${escapeMarkdownInline(s.name)}${cls}${range}`);
       }
     }
     if (result.organizations?.length) {
       lines.push('');
       lines.push('## Organizations');
       for (const o of result.organizations) {
-        const cls = o.classification ? ` (${o.classification})` : '';
-        const id = o.id ? ` — ${o.id}` : '';
-        lines.push(`- ${o.name ?? '(unnamed)'}${cls}${id}`);
+        const cls = o.classification ? ` (${escapeMarkdownInline(o.classification)})` : '';
+        const id = o.id ? ` — ${escapeMarkdownInline(o.id)}` : '';
+        const name = o.name === undefined ? '(unnamed)' : escapeMarkdownInline(o.name);
+        lines.push(`- ${name}${cls}${id}`);
       }
     }
     if (result.latest_runs?.length) {
       lines.push('');
       lines.push('## Latest Runs');
       for (const r of result.latest_runs) {
-        const end = r.end_time ? ` → ${r.end_time}` : '';
-        lines.push(`- ${r.start_time}${end} (success: ${r.success ?? 'n/a'})`);
+        const end = r.end_time ? ` → ${escapeMarkdownInline(r.end_time)}` : '';
+        lines.push(
+          `- ${escapeMarkdownInline(r.start_time)}${end} (success: ${r.success ?? 'n/a'})`,
+        );
       }
     }
     return [{ type: 'text', text: lines.join('\n') }];

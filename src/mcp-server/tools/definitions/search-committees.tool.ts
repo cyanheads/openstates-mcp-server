@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { escapeMarkdownInline, markdown, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const CommitteeIncludeEnum = z.enum(['memberships', 'links', 'sources']);
@@ -28,7 +29,9 @@ export const searchCommittees = tool('openstates_search_committees', {
     chamber: z
       .enum(['upper', 'lower'])
       .optional()
-      .describe('Filter by chamber. "upper" = Senate, "lower" = House/Assembly.'),
+      .describe(
+        'Filter by chamber. "upper" = Senate, "lower" = House/Assembly. A chamber filter omits joint committees; omit chamber to include them.',
+      ),
     parent: z
       .string()
       .optional()
@@ -151,9 +154,12 @@ export const searchCommittees = tool('openstates_search_committees', {
       ),
   },
   enrichmentTrailer: {
+    // Caller-echoed values: JSON in a code span reads back exactly, with no escapes to copy along.
     appliedFilters: {
-      render: (v) => `Filters: ${JSON.stringify(v)}`,
+      render: (v) => `**appliedFilters:** ${markdown().inlineCode(JSON.stringify(v)).build()}`,
     },
+    // Server-authored prose; the framework default would render this string as a code span.
+    coverageNote: { render: (v) => `**coverageNote:** ${v}` },
   },
   errors: [
     {
@@ -172,6 +178,15 @@ export const searchCommittees = tool('openstates_search_committees', {
       when: 'Open States rejected the request as not found — page is past the last page for this query.',
       recovery:
         'Request a page within the max_page bound returned by a previous call; the error message names the valid range.',
+    },
+    {
+      reason: 'rate_limited',
+      code: JsonRpcErrorCode.RateLimited,
+      when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+      recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+      retryable: true,
+      // Raised by the service, which reads the cap from the 429 body or its own daily-budget guard.
+      thrownBy: 'service',
     },
   ],
 
@@ -225,31 +240,32 @@ export const searchCommittees = tool('openstates_search_committees', {
   },
 
   format: (result) => {
+    const e = escapeMarkdownInline;
     const lines: string[] = [
       `**${result.pagination.total_items} committees** (page ${result.pagination.page}/${result.pagination.max_page}, per page ${result.pagination.per_page}, showing ${result.results.length})`,
     ];
     for (const committee of result.results) {
       lines.push('');
-      lines.push(`## ${committee.name}`);
-      lines.push(`**ID:** ${committee.id}`);
-      lines.push(`**Classification:** ${committee.classification}`);
-      if (committee.parent_id) lines.push(`**Parent ID:** ${committee.parent_id}`);
+      lines.push(`## ${e(committee.name)}`);
+      lines.push(`**ID:** ${e(committee.id)}`);
+      lines.push(`**Classification:** ${e(committee.classification)}`);
+      if (committee.parent_id) lines.push(`**Parent ID:** ${e(committee.parent_id)}`);
       if (committee.memberships?.length) {
         lines.push('**Members:**');
         for (const m of committee.memberships) {
-          lines.push(`- ${m.person_name} (${m.role}) — ID: ${m.person_id}`);
+          const role = m.role ? ` (${e(m.role)})` : '';
+          const id = m.person_id ? ` — ID: ${e(m.person_id)}` : '';
+          lines.push(`- ${e(m.person_name)}${role}${id}`);
         }
       }
       if (committee.links?.length) {
         lines.push(
-          `**Links:** ${committee.links.map((l) => (l.note ? `${l.note}: ${l.url}` : l.url)).join(', ')}`,
+          `**Links:** ${committee.links.map((l) => markdownLink(l.note || l.url, l.url)).join(', ')}`,
         );
       }
       if (committee.sources?.length) {
         lines.push('**Sources:**');
-        for (const s of committee.sources) {
-          lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
-        }
+        for (const s of committee.sources) lines.push(`- ${markdownLink(s.note || s.url, s.url)}`);
       }
     }
     return [{ type: 'text', text: lines.join('\n') }];

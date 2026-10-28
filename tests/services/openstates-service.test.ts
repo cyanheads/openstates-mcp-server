@@ -1,13 +1,14 @@
 /**
  * @fileoverview Tests for the OpenStatesApiService — pure normalization helpers,
- * the `legislature` chamber union, and service unit behaviour (no real network calls).
+ * the `legislature` union, and service unit behaviour (no real network calls).
  * @module tests/services/openstates-service.test
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import { type Context, tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, type McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { jurisdictionResource } from '@/mcp-server/resources/definitions/jurisdiction.resource.js';
 
 // We test the normalisation logic by exercising it via the service's
 // public searchPeople / searchCommittees codepaths, which call the private
@@ -23,6 +24,7 @@ import {
   shutdownOpenStatesApiService,
 } from '@/services/openstates/openstates-service.js';
 import type { PersonListResponse, RawPerson } from '@/services/openstates/types.js';
+import { readBack } from '../helpers/commonmark.js';
 
 // Minimal stubs so the constructor doesn't blow up.
 const fakeAppConfig = {} as ConstructorParameters<typeof OpenStatesApiService>[0];
@@ -175,8 +177,20 @@ describe('OpenStatesApiService constructor', () => {
 // org_classification=legislature — the upper + lower union
 // --------------------------------------------------------------------------
 
+const WASHINGTON = { id: 'ocd-jurisdiction/country:us/state:wa/government', name: 'Washington' };
+const NEBRASKA = { id: 'ocd-jurisdiction/country:us/state:ne/government', name: 'Nebraska' };
+const DISTRICT_OF_COLUMBIA = {
+  id: 'ocd-jurisdiction/country:us/district:dc/government',
+  name: 'District of Columbia',
+};
+
 /** Build a raw upstream person record with a stable, positional identity. */
-function makeFixturePerson(id: string, chamber: string, index: number): RawPerson {
+function makeFixturePerson(
+  id: string,
+  chamber: string,
+  index: number,
+  jurisdiction: RawPerson['jurisdiction'] = WASHINGTON,
+): RawPerson {
   return {
     id,
     name: `${chamber} ${index}`,
@@ -186,7 +200,7 @@ function makeFixturePerson(id: string, chamber: string, index: number): RawPerso
       org_classification: chamber,
       district: String(index + 1),
     },
-    jurisdiction: { id: 'ocd-jurisdiction/country:us/state:wa/government', name: 'Washington' },
+    jurisdiction,
     given_name: chamber,
     family_name: String(index),
     email: '',
@@ -199,7 +213,8 @@ const pad = (n: number) => String(n).padStart(2, '0');
 /**
  * Mirrors Washington's live shape: 49 `upper`, 98 `lower`, 4 `executive`. The union is
  * therefore 147 while the unfiltered set is 151 — the arithmetic that makes "just omit
- * org_classification" a wrong alias rather than a shortcut.
+ * org_classification" a wrong alias rather than a shortcut. No Washington role is classified
+ * `legislature`, so upstream's `legislature` filter matches nobody there.
  */
 const UPPER = Array.from({ length: 49 }, (_, i) =>
   makeFixturePerson(`upper-${pad(i)}`, 'upper', i),
@@ -211,19 +226,27 @@ const EXEC = Array.from({ length: 4 }, (_, i) =>
   makeFixturePerson(`exec-${pad(i)}`, 'executive', i),
 );
 
+/**
+ * Mirrors the live unicameral shape, where the body has no `upper`/`lower` chamber and every
+ * member's role is classified `legislature`: Nebraska's 49 senators and the DC Council's 13.
+ */
+const NE_LEGISLATURE = Array.from({ length: 49 }, (_, i) =>
+  makeFixturePerson(`ne-leg-${pad(i)}`, 'legislature', i, NEBRASKA),
+);
+const NE_EXEC = [makeFixturePerson('ne-exec-00', 'executive', 0, NEBRASKA)];
+const DC_COUNCIL = Array.from({ length: 13 }, (_, i) =>
+  makeFixturePerson(`dc-leg-${pad(i)}`, 'legislature', i, DISTRICT_OF_COLUMBIA),
+);
+
 /** The union in the order the service concatenates it: every upper, then every lower. */
 const UNION_IDS = [...UPPER, ...LOWER].map((p) => p.id);
 
-const POOLS: Record<string, RawPerson[]> = {
-  upper: UPPER,
-  lower: LOWER,
-  executive: EXEC,
-  // Accepted by the upstream enum, but never any person's current role — matches nobody.
-  legislature: [],
-  government: [],
-  // No classification: every current officeholder, legislative and executive alike.
-  all: [...UPPER, ...LOWER, ...EXEC],
-};
+/** Every current officeholder the fake `/people` endpoint knows, in upstream order. */
+const PEOPLE = [...UPPER, ...LOWER, ...EXEC, ...NE_LEGISLATURE, ...NE_EXEC, ...DC_COUNCIL];
+
+/** Two-letter code of a fixture person's jurisdiction, the form the tests filter by. */
+const jurisdictionCode = (person: RawPerson) =>
+  /:([a-z]{2})\/government$/.exec(person.jurisdiction?.id ?? '')?.[1];
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -253,11 +276,13 @@ const abortRejectingFetch = () =>
   );
 
 /**
- * Stands in for the live `/people` endpoint, reproducing the two upstream limits the union
- * has to work within — both measured against the real API, neither declared in
- * `openapi.json`: `per_page` above 50 is an HTTP 400, and any `page` past a chamber's
- * `max_page` is an HTTP 404. A request that oversteps either fails here the way it would
- * fail in production, so the tests cover the illegal-page trap and not just row counts.
+ * Stands in for the live `/people` endpoint over `PEOPLE`, filtering by `jurisdiction`,
+ * `org_classification` (the current role's), and repeated `id` the way upstream does, and
+ * reproducing the two upstream limits the union has to work within — both measured against the
+ * real API, neither declared in `openapi.json`: `per_page` above 50 is an HTTP 400, and any
+ * `page` past a result set's `max_page` is an HTTP 404. A request that oversteps either fails
+ * here the way it would fail in production, so the tests cover the illegal-page trap and not
+ * just row counts.
  */
 function stubPeopleEndpoint(): URLSearchParams[] {
   const requests: URLSearchParams[] = [];
@@ -274,7 +299,15 @@ function stubPeopleEndpoint(): URLSearchParams[] {
         );
       }
 
-      const pool = POOLS[url.searchParams.get('org_classification') ?? 'all'] ?? [];
+      const jurisdiction = url.searchParams.get('jurisdiction');
+      const classification = url.searchParams.get('org_classification');
+      const ids = url.searchParams.getAll('id');
+      const pool = PEOPLE.filter(
+        (p) =>
+          (jurisdiction === null || jurisdictionCode(p) === jurisdiction) &&
+          (classification === null || p.current_role?.org_classification === classification) &&
+          (ids.length === 0 || ids.includes(p.id)),
+      );
       const maxPage = Math.max(1, Math.ceil(pool.length / perPage));
       const page = Number(url.searchParams.get('page'));
       if (!Number.isInteger(page) || page < 1 || page > maxPage) {
@@ -453,6 +486,133 @@ describe('searchPeople — org_classification=legislature union', () => {
       current_role: { title: 'Senator', org_classification: 'upper' },
       jurisdiction: { name: 'Washington' },
     });
+  });
+});
+
+/**
+ * A unicameral body (Nebraska, the DC Council) has no `upper`/`lower` chamber: its members' roles
+ * are classified `legislature` itself, so the two-chamber union matched nobody there (#55).
+ */
+describe('searchPeople — org_classification=legislature in a unicameral body', () => {
+  let svc: OpenStatesApiService;
+  let requests: URLSearchParams[];
+  let ctx: Context;
+
+  beforeEach(() => {
+    requests = stubPeopleEndpoint();
+    svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    ctx = createMockContext({ tenantId: 'test-tenant' });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const legislature = (jurisdiction: string, page: number, per_page: number) =>
+    svc.searchPeople({ jurisdiction, org_classification: 'legislature', page, per_page }, ctx);
+  const ids = (res: PersonListResponse) => res.results.map((p) => p.id);
+  const NE_IDS = NE_LEGISLATURE.map((p) => p.id);
+
+  it("returns Nebraska's senators with the body's own total and paging", async () => {
+    const res = await legislature('ne', 1, 20);
+    expect(ids(res)).toEqual(NE_IDS.slice(0, 20));
+    expect(res.pagination).toEqual({ page: 1, per_page: 20, max_page: 3, total_items: 49 });
+  });
+
+  it("returns the DC Council's members", async () => {
+    const res = await legislature('dc', 1, 50);
+    expect(ids(res)).toEqual(DC_COUNCIL.map((p) => p.id));
+    expect(res.pagination.total_items).toBe(13);
+  });
+
+  it('pages over the whole body with no duplicate, no dropped member, and no executive', async () => {
+    const walked: string[] = [];
+    for (let page = 1; page <= Math.ceil(49 / 7); page++) {
+      walked.push(...ids(await legislature('ne', page, 7)));
+    }
+    expect(walked).toEqual(NE_IDS);
+  });
+
+  it('reconstructs page(0, 2L) from page(0, L) ++ page(L, L) past the first upstream page', async () => {
+    const L = 10;
+    const wide = await legislature('ne', 2, 2 * L); // [20, 40)
+    const first = await legislature('ne', 3, L); // [20, 30)
+    const second = await legislature('ne', 4, L); // [30, 40)
+    expect([...ids(first), ...ids(second)]).toEqual(ids(wide));
+    expect(ids(wide)).toEqual(NE_IDS.slice(20, 40));
+  });
+
+  it('returns an empty page past the end of the body instead of a 404', async () => {
+    const res = await legislature('ne', 9, 10);
+    expect(res.results).toEqual([]);
+    expect(res.pagination.total_items).toBe(49);
+  });
+
+  it('asks both chambers, then the legislature, for a unicameral body', async () => {
+    await legislature('ne', 1, 20);
+    const asked = requests.map((q) => q.get('org_classification'));
+    // The two chamber heads go out concurrently, so only their pairing is fixed, not their order.
+    expect(asked.slice(0, 2).sort()).toEqual(['lower', 'upper']);
+    expect(asked.slice(2)).toEqual(['legislature']);
+  });
+
+  it('costs at most four upstream calls for a deep page', async () => {
+    await legislature('ne', 4, 10); // [30, 40)
+    expect(requests).toHaveLength(4);
+  });
+
+  it('leaves the single-chamber classifications as plain pass-through queries', async () => {
+    const res = await svc.searchPeople(
+      { jurisdiction: 'ne', org_classification: 'upper', page: 1, per_page: 10 },
+      ctx,
+    );
+    expect(res.pagination.total_items).toBe(0);
+    expect(requests.map((q) => q.get('org_classification'))).toEqual(['upper']);
+  });
+
+  it('returns an empty union when no member of either form matches', async () => {
+    const res = await svc.searchPeople(
+      {
+        jurisdiction: 'wa',
+        id: ['ocd-person/nobody'],
+        org_classification: 'legislature',
+        page: 1,
+        per_page: 10,
+      },
+      ctx,
+    );
+    expect(res.results).toEqual([]);
+    expect(res.pagination).toEqual({ page: 1, per_page: 10, max_page: 1, total_items: 0 });
+  });
+
+  it('merges both forms for an id lookup that spans a bicameral and a unicameral body', async () => {
+    const res = await svc.searchPeople(
+      {
+        id: ['ne-leg-07', 'lower-05', 'exec-00', 'upper-03', 'ne-exec-00'],
+        org_classification: 'legislature',
+        page: 1,
+        per_page: 10,
+      },
+      ctx,
+    );
+    // Every upper, then every lower, then every legislature-classified member; no executive.
+    expect(ids(res)).toEqual(['upper-03', 'lower-05', 'ne-leg-07']);
+    expect(res.pagination.total_items).toBe(3);
+  });
+
+  it('pages an unscoped mixed union across all three seams', async () => {
+    const id = [...UPPER.slice(0, 3), ...LOWER.slice(0, 4), ...NE_LEGISLATURE.slice(0, 5)].map(
+      (p) => p.id,
+    );
+    const walked: string[] = [];
+    for (let page = 1; page <= 6; page++) {
+      const res = await svc.searchPeople(
+        { id, org_classification: 'legislature', page, per_page: 2 },
+        ctx,
+      );
+      expect(res.pagination.total_items).toBe(12);
+      walked.push(...ids(res));
+    }
+    expect(walked).toEqual(id);
   });
 });
 
@@ -1064,7 +1224,7 @@ describe('fetchJson — caching and rate-limit fail-fast', () => {
     await expect(svc.searchBills({ q: 'x', page: 1, per_page: 10 }, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.RateLimited,
     });
-    // RateLimited is a transient code; absent retryable:false, withRetry would retry it 4×.
+    // RateLimited is a transient code by default; the service's predicate excludes it, so one attempt.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -1231,7 +1391,8 @@ describe('fetchJson — caching and rate-limit fail-fast', () => {
     await svc.searchBills({ q: 'b', page: 1, per_page: 10 }, ctx);
     await expect(svc.searchBills({ q: 'c', page: 1, per_page: 10 }, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.RateLimited,
-      data: { retryable: false }, // re-stamped so withRetry can't retry the guard's own rejection
+      // The same contract an upstream 429 carries: wait, then the same call succeeds.
+      data: { reason: 'rate_limited', retryable: true },
     });
     expect(fetchMock).toHaveBeenCalledTimes(2); // 3rd request rejected before fetch — zero upstream cost
   });
@@ -1260,6 +1421,507 @@ describe('fetchJson — caching and rate-limit fail-fast', () => {
     expect(err.message).not.toContain('{waitTime}');
     expect(err.message).toMatch(/\d+ seconds/);
   });
+});
+
+// --------------------------------------------------------------------------
+// fetchJson — the `rate_limited` contract (issue #51). Open States answers a capped key with
+// 429 `{"detail":"exceeded limit of 10/min: 11"}` and no `Retry-After`; its windows are fixed UTC
+// minute/hour/day. The caller gets the detail, `retryable: true`, and the seconds to wait — in one
+// upstream attempt, never a sleep inside the call.
+// --------------------------------------------------------------------------
+
+describe('fetchJson — rate_limited contract', () => {
+  let ctx: Context;
+
+  beforeEach(() => {
+    ctx = createMockContext({ tenantId: 'test-tenant' });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  /** The 429 Open States sends: JSON `detail`, no `Retry-After` unless a test adds one. */
+  const rateLimitResponse = (detail: string, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify({ detail }), {
+      status: 429,
+      statusText: 'Too Many Requests',
+      headers: { 'Content-Type': 'application/json', ...headers },
+    });
+
+  /** One searchBills call against a fetch that always answers `respond()`; returns the rejection. */
+  async function rejectionFor(respond: () => Response) {
+    const fetchMock = vi.fn(() => Promise.resolve(respond()));
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    const err = (await svc
+      .searchBills({ jurisdiction: 'ca', q: 'housing', page: 1, per_page: 10 }, ctx)
+      .then(
+        () => {
+          throw new Error('expected a rejection');
+        },
+        (e: unknown) => e,
+      )) as McpError;
+    return { err, fetchMock };
+  }
+
+  /** Freezes `Date` only, so timers stay real and the call is not held on a faked clock. */
+  const freezeClockAt = (iso: string) => vi.useFakeTimers({ toFake: ['Date'], now: new Date(iso) });
+
+  it('carries the Open States detail, reason, retryable, and the seconds left in the UTC minute', async () => {
+    freezeClockAt('2026-10-28T13:19:12.250Z');
+    const { err, fetchMock } = await rejectionFor(() =>
+      rateLimitResponse('exceeded limit of 10/min: 11'),
+    );
+
+    expect(err.code).toBe(JsonRpcErrorCode.RateLimited);
+    expect(err.message).toBe(
+      "Open States rate-limited this server's API key: exceeded limit of 10/min: 11.",
+    );
+    expect(err.data).toMatchObject({
+      reason: 'rate_limited',
+      retryable: true,
+      retryAfter: 48, // 47.75 s left in 13:19, rounded up
+      status: 429,
+      url: 'https://v3.openstates.org/bills',
+    });
+    // The service leaves the hint to the calling definition's contract entry.
+    expect(err.data).not.toHaveProperty('recovery');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Fixed UTC windows, measured against a non-UTC zone with a 45-minute offset so a local-time
+   * hour or day boundary gives a different answer from the UTC one.
+   */
+  it.each([
+    ['exceeded limit of 10/min: 11', '2026-10-28T13:19:12.250Z', 48],
+    ['exceeded limit of 10/min: 11', '2026-10-28T13:19:00.000Z', 60],
+    ['exceeded limit of 10/min: 11', '2026-10-28T13:19:59.999Z', 1],
+    ['exceeded limit of 100/hour: 101', '2026-10-28T13:19:12.250Z', 2448],
+    ['exceeded limit of 250/day: 251', '2026-10-28T13:19:12.250Z', 38448],
+    ['exceeded limit of 250/day: 251', '2026-10-28T23:59:59.999Z', 1],
+    ['exceeded limit of 250/day: 251', '2026-10-28T00:00:00.000Z', 86_400],
+  ])('%s at %s waits %i s to the next UTC boundary', async (detail, now, expected) => {
+    vi.stubEnv('TZ', 'Asia/Kathmandu');
+    freezeClockAt(now);
+    // The zone switch took effect: 13:19Z is 19:04 in Kathmandu.
+    expect(new Date('2026-10-28T13:19:12.250Z').getHours()).toBe(19);
+
+    const { err } = await rejectionFor(() => rateLimitResponse(detail));
+
+    expect(err.message).toContain(detail);
+    expect(err.data?.['retryAfter']).toBe(expected);
+  });
+
+  it('honors a sent Retry-After over the computed window', async () => {
+    freezeClockAt('2026-10-28T13:19:12.250Z');
+    const { err } = await rejectionFor(() =>
+      rateLimitResponse('exceeded limit of 10/min: 11', { 'Retry-After': '7' }),
+    );
+    expect(err.data?.['retryAfter']).toBe(7);
+  });
+
+  it('reads an HTTP-date Retry-After as the seconds until that instant', async () => {
+    freezeClockAt('2026-10-28T13:19:12.250Z');
+    const { err } = await rejectionFor(() =>
+      rateLimitResponse('exceeded limit of 10/min: 11', {
+        'Retry-After': 'Wed, 28 Oct 2026 13:21:00 GMT',
+      }),
+    );
+    expect(err.data?.['retryAfter']).toBe(108); // 107.75 s, rounded up
+  });
+
+  it('falls back to the detail window when Retry-After does not parse', async () => {
+    freezeClockAt('2026-10-28T13:19:12.250Z');
+    const { err } = await rejectionFor(() =>
+      rateLimitResponse('exceeded limit of 10/min: 11', { 'Retry-After': 'soon' }),
+    );
+    expect(err.data?.['retryAfter']).toBe(48);
+  });
+
+  it('omits retryAfter when neither a header nor a recognizable detail gives a wait', async () => {
+    const { err } = await rejectionFor(() => rateLimitResponse('rate limited'));
+
+    expect(err.message).toBe("Open States rate-limited this server's API key: rate limited.");
+    expect(err.data).toMatchObject({ reason: 'rate_limited', retryable: true });
+    expect(err.data).not.toHaveProperty('retryAfter');
+  });
+
+  it('names the 429 without a detail when the body is not JSON', async () => {
+    const { err } = await rejectionFor(
+      () => new Response('Too Many Requests', { status: 429, statusText: 'Too Many Requests' }),
+    );
+
+    expect(err.message).toBe("Open States rate-limited this server's API key (HTTP 429).");
+    expect(err.data).toMatchObject({ reason: 'rate_limited', retryable: true, status: 429 });
+    expect(err.data).not.toHaveProperty('retryAfter');
+  });
+
+  /**
+   * `retryable: true` with a numeric `retryAfter` is exactly what `withRetry`'s default predicate
+   * sleeps on and re-sends. The call must stay one attempt with nothing armed to wake it: a sleep
+   * here never resolves on the faked clock, so the call would not settle. One second before the
+   * minute rolls, so the wait sits under `withRetry`'s 30 s `maxDelayMs` — a longer one makes the
+   * default predicate fail fast on its own, and the test would pass without the service's.
+   */
+  it('makes one upstream attempt and arms no backoff timer', async () => {
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'Date'],
+      now: new Date('2026-10-28T13:19:59.000Z'),
+    });
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(rateLimitResponse('exceeded limit of 10/min: 11')),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+
+    let settled = false;
+    const pending = svc
+      .searchBills({ q: 'housing', page: 1, per_page: 10 }, ctx)
+      .catch((e: unknown) => e)
+      .finally(() => {
+        settled = true;
+      });
+    await vi.waitFor(() => expect(settled).toBe(true));
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await expect(pending).resolves.toMatchObject({
+      code: JsonRpcErrorCode.RateLimited,
+      data: { retryable: true, retryAfter: 1 },
+    });
+  });
+
+  /**
+   * The daily-budget guard counts the 429 attempt (Open States counts it too) and rejects the next
+   * call on the same contract, with the seconds until its own window frees a slot — not the UTC
+   * day, since the guard's window is rolling from its first counted request.
+   */
+  it('counts the 429 toward the daily budget, then rejects with its own retryAfter', async () => {
+    freezeClockAt('2026-10-28T13:19:12.250Z');
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(rateLimitResponse('exceeded limit of 10/min: 11')),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig, 1);
+
+    await expect(svc.searchBills({ q: 'a', page: 1, per_page: 10 }, ctx)).rejects.toMatchObject({
+      data: { reason: 'rate_limited', retryAfter: 48 },
+    });
+    vi.setSystemTime(new Date('2026-10-28T13:19:13.500Z'));
+    const err = await svc.searchBills({ q: 'b', page: 1, per_page: 10 }, ctx).catch((e) => e);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the guard rejects before any second fetch
+    expect(err.code).toBe(JsonRpcErrorCode.RateLimited);
+    expect(err.message).toContain('self-imposed');
+    expect(err.data).toMatchObject({
+      reason: 'rate_limited',
+      retryable: true,
+      retryAfter: 86_399, // 24 h from 13:19:12.250 less 1.25 s, rounded up
+    });
+  });
+
+  it('keeps a 4xx detail rewrite off the 429 path', async () => {
+    const { err } = await rejectionFor(() => rateLimitResponse('exceeded limit of 10/min: 11'));
+    expect(err.message).not.toContain('rejected the request');
+  });
+
+  /**
+   * Through a served definition: the framework fills the declared recovery from `data.reason`, and
+   * `content[]` carries the message, the `Recovery:` line, and the branchable terms.
+   */
+  it('reaches the caller with the declared recovery on both surfaces', async () => {
+    freezeClockAt('2026-10-28T13:19:12.250Z');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(rateLimitResponse('exceeded limit of 10/min: 11'))),
+    );
+    const rateLimitedEntry = jurisdictionResource.errors?.find((e) => e.reason === 'rate_limited');
+    expect(rateLimitedEntry).toBeDefined();
+    const probe = tool('openstates_rate_limit_probe', {
+      description: 'Test-only definition that reaches the service through searchBills.',
+      input: z.object({ q: z.string().describe('Query.') }),
+      output: z.object({ total: z.number().describe('Total bills.') }),
+      errors: [rateLimitedEntry as NonNullable<typeof rateLimitedEntry>],
+      async handler(input, handlerCtx) {
+        const res = await getOpenStatesApiService().searchBills(
+          { q: input.q, page: 1, per_page: 10 },
+          handlerCtx,
+        );
+        return { total: res.pagination.total_items };
+      },
+    });
+    initOpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+
+    try {
+      const result = await runToolContract(probe, { q: 'housing' });
+      const message =
+        "Open States rate-limited this server's API key: exceeded limit of 10/min: 11.";
+      const hint = 'Wait the number of seconds in retryAfter, then retry the same call unchanged.';
+
+      expect(result).toMatchObject({
+        isError: true,
+        structuredContent: {
+          error: {
+            code: JsonRpcErrorCode.RateLimited,
+            message,
+            data: { reason: 'rate_limited', retryable: true, retryAfter: 48, recovery: { hint } },
+          },
+        },
+      });
+      const text = (result.content[0] as { text: string }).text;
+      expect(readBack(text)).toEqual([
+        `Error: ${message}`,
+        `Recovery: ${hint}`,
+        expect.stringMatching(/^\(reason rate_limited · retryable( · request \S+)?\)$/),
+      ]);
+    } finally {
+      shutdownOpenStatesApiService();
+    }
+  });
+});
+
+// --------------------------------------------------------------------------
+// getBillById — the OCD ID or three-part path reaches /bills/ one segment at a time (issue #49).
+// --------------------------------------------------------------------------
+
+describe('getBillById — request path', () => {
+  let ctx: Context;
+  let requested: URL[];
+
+  beforeEach(() => {
+    ctx = createMockContext({ tenantId: 'test-tenant' });
+    requested = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request) => {
+        requested.push(new URL(String(input)));
+        return Promise.resolve(jsonResponse(200, { id: 'ocd-bill/x' }));
+      }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const UUID = '6a3f5c7e-1d2b-4c8a-9e0f-123456789abc';
+
+  it.each([
+    [`ocd-bill/${UUID}`, `/bills/ocd-bill/${UUID}`],
+    ['wa/2025-2026/HB 2383', '/bills/wa/2025-2026/HB%202383'],
+  ])('sends %s to %s, as before', async (id, pathname) => {
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    await svc.getBillById(id, ['votes'], ctx);
+
+    expect(requested).toHaveLength(1);
+    expect(requested[0]?.pathname).toBe(pathname);
+    expect(requested[0]?.searchParams.getAll('include')).toEqual(['votes']);
+  });
+
+  it('keeps ?, #, and % inside their segment rather than opening a query or fragment', async () => {
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    await svc.getBillById('wa/2025-2026/HB 1?include=sponsorships#x%2F', undefined, ctx);
+
+    expect(requested).toHaveLength(1);
+    expect(requested[0]?.pathname).toBe(
+      '/bills/wa/2025-2026/HB%201%3Finclude%3Dsponsorships%23x%252F',
+    );
+    expect(requested[0]?.search).toBe('');
+    expect(requested[0]?.hash).toBe('');
+  });
+
+  it('keeps a percent-escaped segment literal inside its segment', async () => {
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    await svc.getBillById('wa/%2e%2e/HB 1', undefined, ctx);
+
+    expect(requested).toHaveLength(1);
+    expect(requested[0]?.pathname).toBe('/bills/wa/%252e%252e/HB%201');
+  });
+
+  it.each([
+    { label: 'an empty segment', id: 'wa//HB 1' },
+    { label: 'a trailing empty segment', id: `ocd-bill/${UUID}/` },
+    { label: 'a single-dot segment', id: 'wa/./HB 1' },
+    { label: 'a double-dot segment', id: `ocd-bill/..` },
+    { label: 'a leading double-dot segment', id: `../ocd-bill/${UUID}` },
+  ])('refuses a bill ID with $label as a validation error, with no request', async ({ id }) => {
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    const call = svc.getBillById(id, undefined, ctx);
+
+    await expect(call).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ValidationError,
+      message: `Bill ID ${JSON.stringify(id)} is not a bill route. Pass the id of a bill exactly as a bill search returns it.`,
+    });
+    expect(requested).toHaveLength(0);
+  });
+});
+
+describe('getBillByPath — request path', () => {
+  let ctx: Context;
+  let requested: URL[];
+
+  beforeEach(() => {
+    ctx = createMockContext({ tenantId: 'test-tenant' });
+    requested = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request) => {
+        requested.push(new URL(String(input)));
+        return Promise.resolve(jsonResponse(200, { id: 'ocd-bill/x' }));
+      }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sends each part as one percent-encoded segment, as before', async () => {
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    await svc.getBillByPath('wa', '2025-2026', 'HB 2383/x', ['votes'], ctx);
+
+    expect(requested).toHaveLength(1);
+    expect(requested[0]?.pathname).toBe('/bills/wa/2025-2026/HB%202383%2Fx');
+    expect(requested[0]?.searchParams.getAll('include')).toEqual(['votes']);
+  });
+
+  it.each([
+    { label: 'an empty bill_id', parts: ['wa', '2025-2026', ''] },
+    { label: 'a single-dot session', parts: ['wa', '.', 'HB 1'] },
+    { label: 'a double-dot jurisdiction', parts: ['..', '2025-2026', 'HB 1'] },
+    { label: 'a double-dot bill_id', parts: ['wa', '2025-2026', '..'] },
+  ])('refuses $label as a validation error, with no request', async ({ parts }) => {
+    const [jurisdiction = '', session = '', billId = ''] = parts;
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    const call = svc.getBillByPath(jurisdiction, session, billId, undefined, ctx);
+
+    await expect(call).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ValidationError,
+      message: `Bill path ${JSON.stringify(parts.join('/'))} is not a bill route. Pass the jurisdiction, session, and bill identifier of a bill exactly as a bill search returns them.`,
+    });
+    expect(requested).toHaveLength(0);
+  });
+});
+
+// --------------------------------------------------------------------------
+// getCommittee / getEvent / getJurisdiction — the caller's id is one segment
+// of its collection's detail route (issue #58).
+// --------------------------------------------------------------------------
+
+describe('single-id detail routes — request path', () => {
+  let ctx: Context;
+  let requested: URL[];
+
+  beforeEach(() => {
+    ctx = createMockContext({ tenantId: 'test-tenant' });
+    requested = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request) => {
+        requested.push(new URL(String(input)));
+        return Promise.resolve(jsonResponse(200, { id: 'x', name: 'x' }));
+      }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const UUID = '6a3f5c7e-1d2b-4c8a-9e0f-123456789abc';
+  type Lookup = (svc: OpenStatesApiService, id: string) => Promise<unknown>;
+  const lookups: Record<'committee' | 'event' | 'jurisdiction', Lookup> = {
+    committee: (svc, id) => svc.getCommittee(id, ['memberships'], ctx),
+    event: (svc, id) => svc.getEvent(id, ['memberships'], ctx),
+    jurisdiction: (svc, id) => svc.getJurisdiction(id, ['memberships'], ctx),
+  };
+
+  it.each([
+    ['committee', `ocd-organization/${UUID}`, `/committees/ocd-organization%2F${UUID}`],
+    ['event', `ocd-event/${UUID}`, `/events/ocd-event%2F${UUID}`],
+    [
+      'jurisdiction',
+      'ocd-jurisdiction/country:us/state:wa/government',
+      '/jurisdictions/ocd-jurisdiction%2Fcountry%3Aus%2Fstate%3Awa%2Fgovernment',
+    ],
+    ['jurisdiction', 'wa', '/jurisdictions/wa'],
+    ['jurisdiction', 'New York', '/jurisdictions/New%20York'],
+    ['jurisdiction', '%2e%2e', '/jurisdictions/%252e%252e'],
+    ['committee', '...', '/committees/...'],
+  ] as const)('sends the %s id %j to %s, as before', async (kind, id, pathname) => {
+    const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+    await lookups[kind](svc, id);
+
+    expect(requested).toHaveLength(1);
+    expect(requested[0]?.pathname).toBe(pathname);
+    expect(requested[0]?.searchParams.getAll('include')).toEqual(['memberships']);
+  });
+
+  it.each([
+    {
+      kind: 'committee',
+      id: '..',
+      message:
+        'Committee ID ".." is not a committee route. Pass the id of a committee exactly as a committee search returns it.',
+    },
+    {
+      kind: 'committee',
+      id: '.',
+      message:
+        'Committee ID "." is not a committee route. Pass the id of a committee exactly as a committee search returns it.',
+    },
+    {
+      kind: 'committee',
+      id: '',
+      message:
+        'Committee ID "" is not a committee route. Pass the id of a committee exactly as a committee search returns it.',
+    },
+    {
+      kind: 'event',
+      id: '..',
+      message:
+        'Event ID ".." is not an event route. Pass the id of an event exactly as an event search returns it.',
+    },
+    {
+      kind: 'event',
+      id: '.',
+      message:
+        'Event ID "." is not an event route. Pass the id of an event exactly as an event search returns it.',
+    },
+    {
+      kind: 'event',
+      id: '',
+      message:
+        'Event ID "" is not an event route. Pass the id of an event exactly as an event search returns it.',
+    },
+    {
+      kind: 'jurisdiction',
+      id: '..',
+      message:
+        'Jurisdiction ID ".." is not a jurisdiction route. Pass a jurisdiction\'s id or name exactly as a jurisdiction listing returns it, or its two-letter abbreviation.',
+    },
+    {
+      kind: 'jurisdiction',
+      id: '.',
+      message:
+        'Jurisdiction ID "." is not a jurisdiction route. Pass a jurisdiction\'s id or name exactly as a jurisdiction listing returns it, or its two-letter abbreviation.',
+    },
+    {
+      kind: 'jurisdiction',
+      id: '',
+      message:
+        'Jurisdiction ID "" is not a jurisdiction route. Pass a jurisdiction\'s id or name exactly as a jurisdiction listing returns it, or its two-letter abbreviation.',
+    },
+  ] as const)(
+    'refuses the $kind id $id as a validation error, with no request',
+    async ({ kind, id, message }) => {
+      const svc = new OpenStatesApiService(fakeAppConfig, fakeStorage, fakeServerConfig);
+      const call = lookups[kind](svc, id);
+
+      await expect(call).rejects.toMatchObject({ code: JsonRpcErrorCode.ValidationError, message });
+      expect(requested).toHaveLength(0);
+    },
+  );
 });
 
 // --------------------------------------------------------------------------

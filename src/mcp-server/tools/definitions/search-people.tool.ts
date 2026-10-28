@@ -6,6 +6,12 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import {
+  escapeMarkdownInline,
+  markdown,
+  markdownImage,
+  markdownLink,
+} from '@cyanheads/mcp-ts-core/utils';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const PersonIncludeEnum = z.enum([
@@ -19,7 +25,7 @@ const PersonIncludeEnum = z.enum([
 export const searchPeople = tool('openstates_search_people', {
   title: 'Search People',
   description:
-    'Search state legislators and officials by name, jurisdiction, chamber, or district, or fetch specific people by OCD person ID. Party is reported on every result but cannot be filtered on — narrow by party after the call. Either jurisdiction or id is required — a search spanning all 56 jurisdictions exceeds the upstream timeout, including a name-only one, so scope every call to a single state or to specific person IDs. Use openstates_list_jurisdictions to pick a jurisdiction, or openstates_get_legislators_by_location when you have coordinates but no state. id takes the person IDs that openstates_get_bill sponsorships and openstates_get_committee memberships hand back, and resolves any number of them in one call. Supports name substring matching (case-insensitive). org_classification targets a role type: "upper" for Senate, "lower" for House/Assembly, "executive" for governors and executive officials, and "legislature" for every legislator — both chambers merged into one paginated set (all upper members, then all lower), which excludes executive-branch officials. Omitting org_classification is not the same as "legislature": it returns every officeholder, executive officials included. include=offices adds phone, fax, and address. include=links adds website and social links.',
+    'Search state legislators and officials by name, jurisdiction, chamber, or district, or fetch specific people by OCD person ID. Party is reported on every result but cannot be filtered on — narrow by party after the call. Either jurisdiction or id is required — a search spanning all 56 jurisdictions exceeds the upstream timeout, including a name-only one, so scope every call to a single state or to specific person IDs. Use openstates_list_jurisdictions to pick a jurisdiction, or openstates_get_legislators_by_location when you have coordinates but no state. id takes the person IDs that openstates_get_bill sponsorships and openstates_get_committee memberships hand back, and resolves any number of them in one call. Supports name substring matching (case-insensitive). org_classification targets a role type: "upper" for Senate, "lower" for House/Assembly, "executive" for governors and executive officials, and "legislature" for every legislator — both chambers merged into one paginated set (all upper members, then all lower), or the single body in Nebraska and the DC Council, which excludes executive-branch officials. Omitting org_classification is not the same as "legislature": it returns every officeholder, executive officials included. include=offices adds phone, fax, and address. include=links adds website and social links.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   input: z
     .object({
@@ -47,7 +53,7 @@ export const searchPeople = tool('openstates_search_people', {
         .enum(['legislature', 'executive', 'lower', 'upper', 'government'])
         .optional()
         .describe(
-          'Filter by role type. "upper" = Senate, "lower" = House/Assembly, "executive" = governors and executive officials, "legislature" = every legislator (both chambers merged into one paginated set, all upper members then all lower, excluding executive officials). Omitting this filter returns every officeholder including executive ones — it is not equivalent to "legislature".',
+          'Filter by role type. "upper" = Senate, "lower" = House/Assembly, "executive" = governors and executive officials, "legislature" = every legislator (both chambers merged into one paginated set, all upper members then all lower; the single body in Nebraska and the DC Council; excluding executive officials). Unicameral bodies have no "upper" or "lower" members. Omitting this filter returns every officeholder including executive ones — it is not equivalent to "legislature".',
         ),
       district: z
         .string()
@@ -236,9 +242,10 @@ export const searchPeople = tool('openstates_search_people', {
         'Filters applied to this query as the server received them, for agent self-verification of zero or unexpected results.',
       ),
   },
+  // Caller-echoed values: JSON in a code span reads back exactly, with no escapes to copy along.
   enrichmentTrailer: {
     appliedFilters: {
-      render: (v) => `Filters: ${JSON.stringify(v)}`,
+      render: (v) => `**appliedFilters:** ${markdown().inlineCode(JSON.stringify(v)).build()}`,
     },
   },
   errors: [
@@ -258,6 +265,15 @@ export const searchPeople = tool('openstates_search_people', {
       when: 'Open States rejected the request as not found — page is past the last page for this query.',
       recovery:
         'Request a page within the max_page bound returned by a previous call; the error message names the valid range.',
+    },
+    {
+      reason: 'rate_limited',
+      code: JsonRpcErrorCode.RateLimited,
+      when: "The shared Open States API key reached a request cap — Open States' per-minute or daily limit, or this server's own daily budget.",
+      recovery: 'Wait the number of seconds in retryAfter, then retry the same call unchanged.',
+      retryable: true,
+      // Raised by the service, which reads the cap from the 429 body or its own daily-budget guard.
+      thrownBy: 'service',
     },
   ],
 
@@ -309,13 +325,15 @@ export const searchPeople = tool('openstates_search_people', {
     });
 
     if (result.results.length === 0) {
+      // A notice is authored Markdown, so the caller's text quoted inside it is escaped.
       const filters: string[] = [];
-      if (input.jurisdiction) filters.push(`jurisdiction="${input.jurisdiction}"`);
-      if (input.id) filters.push(`id=${JSON.stringify(input.id)}`);
-      if (input.name) filters.push(`name="${input.name}"`);
+      if (input.jurisdiction)
+        filters.push(`jurisdiction="${escapeMarkdownInline(input.jurisdiction)}"`);
+      if (input.id) filters.push(`id=${escapeMarkdownInline(JSON.stringify(input.id))}`);
+      if (input.name) filters.push(`name="${escapeMarkdownInline(input.name)}"`);
       if (input.org_classification)
         filters.push(`org_classification="${input.org_classification}"`);
-      if (input.district) filters.push(`district="${input.district}"`);
+      if (input.district) filters.push(`district="${escapeMarkdownInline(input.district)}"`);
       // An ID query fails differently from a filter query: there is nothing to broaden, and
       // upstream answers an unknown ID with zero rows rather than an error, so the two ways an ID
       // yields nothing are the only ones worth naming.
@@ -328,60 +346,76 @@ export const searchPeople = tool('openstates_search_people', {
     return { results: result.results, pagination: result.pagination };
   },
 
+  /**
+   * Every upstream string goes through an encoder so a CommonMark parse reads it back as written:
+   * `escapeMarkdownInline` for text, `markdownLink` for a URL (labelled by its note, else by
+   * itself), and `markdownImage` for the headshot. A blank line opens each list section, since a
+   * label directly under a list is otherwise folded into the list's last item.
+   */
   format: (result) => {
     const lines: string[] = [
       `**${result.pagination.total_items} legislators** (page ${result.pagination.page}/${result.pagination.max_page}, per page ${result.pagination.per_page}, showing ${result.results.length})`,
     ];
     for (const person of result.results) {
       lines.push('');
-      lines.push(`## ${person.name}`);
-      lines.push(`**ID:** ${person.id}`);
-      lines.push(`**Given name:** ${person.given_name} | **Family name:** ${person.family_name}`);
-      lines.push(`**Party:** ${person.party || 'Not available'}`);
-      lines.push(`**Jurisdiction:** ${person.jurisdiction.name} (${person.jurisdiction.id})`);
+      lines.push(`## ${escapeMarkdownInline(person.name)}`);
+      lines.push(`**ID:** ${escapeMarkdownInline(person.id)}`);
+      lines.push(
+        `**Given name:** ${escapeMarkdownInline(person.given_name)} | **Family name:** ${escapeMarkdownInline(person.family_name)}`,
+      );
+      lines.push(
+        `**Party:** ${person.party ? escapeMarkdownInline(person.party) : 'Not available'}`,
+      );
+      lines.push(
+        `**Jurisdiction:** ${escapeMarkdownInline(person.jurisdiction.name)} (${escapeMarkdownInline(person.jurisdiction.id)})`,
+      );
       if (person.current_role) {
-        const district = person.current_role.district
-          ? ` — District ${person.current_role.district}`
-          : '';
+        const role = person.current_role;
+        const district = role.district ? ` — District ${escapeMarkdownInline(role.district)}` : '';
         lines.push(
-          `**Role:** ${person.current_role.title} (${person.current_role.org_classification})${district}`,
+          `**Role:** ${escapeMarkdownInline(role.title)} (${escapeMarkdownInline(role.org_classification)})${district}`,
         );
-        if (person.current_role.division_id)
-          lines.push(`**Division:** ${person.current_role.division_id}`);
+        if (role.division_id) lines.push(`**Division:** ${escapeMarkdownInline(role.division_id)}`);
       }
-      if (person.email) lines.push(`**Email:** ${person.email}`);
-      if (person.openstates_url) lines.push(`**URL:** ${person.openstates_url}`);
-      if (person.image) lines.push(`**Photo:** ${person.image}`);
+      if (person.email) lines.push(`**Email:** ${escapeMarkdownInline(person.email)}`);
+      if (person.openstates_url)
+        lines.push(`**URL:** ${markdownLink(person.openstates_url, person.openstates_url)}`);
+      if (person.image) lines.push(`**Photo:** ${markdownImage(person.name, person.image)}`);
       if (person.offices?.length) {
         for (const office of person.offices) {
-          const parts: string[] = [`${office.name} [${office.classification}]`];
-          if (office.voice) parts.push(`Phone: ${office.voice}`);
-          if (office.fax) parts.push(`Fax: ${office.fax}`);
-          if (office.address) parts.push(`Address: ${office.address}`);
+          const parts: string[] = [
+            `${escapeMarkdownInline(office.name)} [${escapeMarkdownInline(office.classification)}]`,
+          ];
+          if (office.voice) parts.push(`Phone: ${escapeMarkdownInline(office.voice)}`);
+          if (office.fax) parts.push(`Fax: ${escapeMarkdownInline(office.fax)}`);
+          if (office.address) parts.push(`Address: ${escapeMarkdownInline(office.address)}`);
           lines.push(`**Office:** ${parts.join(' | ')}`);
         }
       }
       if (person.links?.length) {
         lines.push(
-          `**Links:** ${person.links.map((l) => (l.note ? `${l.note}: ${l.url}` : l.url)).join(', ')}`,
+          `**Links:** ${person.links.map((l) => markdownLink(l.note || l.url, l.url)).join(', ')}`,
         );
       }
       if (person.other_names?.length) {
-        lines.push('**Other names:**');
+        lines.push('', '**Other names:**');
         for (const n of person.other_names) {
-          lines.push(`- ${n.name}${n.note ? ` _(${n.note})_` : ''}`);
+          const note = n.note ? ` _(${escapeMarkdownInline(n.note)})_` : '';
+          lines.push(`- ${escapeMarkdownInline(n.name)}${note}`);
         }
       }
       if (person.other_identifiers?.length) {
-        lines.push('**Other identifiers:**');
+        lines.push('', '**Other identifiers:**');
         for (const oi of person.other_identifiers) {
-          lines.push(`- ${oi.identifier} (${oi.scheme})`);
+          lines.push(
+            `- ${escapeMarkdownInline(oi.identifier)} (${escapeMarkdownInline(oi.scheme)})`,
+          );
         }
       }
       if (person.sources?.length) {
-        lines.push('**Sources:**');
+        lines.push('', '**Sources:**');
         for (const s of person.sources) {
-          lines.push(`- ${s.url}${s.note ? ` _(${s.note})_` : ''}`);
+          lines.push(`- ${markdownLink(s.note || s.url, s.url)}`);
         }
       }
     }
