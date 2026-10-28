@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "openstates-mcp-server",
+  "version": "0.3.4",
+  "description": "Search bills, legislators, committees, and events across all 50 US states, DC, and 5 US territories via MCP. STDIO or Streamable HTTP.",
+  "author": {
+    "name": "Casey Hand",
+    "email": "casey@caseyjhand.com",
+    "url": "https://caseyjhand.com"
+  },
+  "homepage": "https://github.com/cyanheads/openstates-mcp-server#readme",
+  "repository": "https://github.com/cyanheads/openstates-mcp-server",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "ai",
+    "bun",
+    "stdio",
+    "streamable-http",
+    "legislation",
+    "openstates",
+    "state-legislature",
+    "bills",
+    "legislators",
+    "open-states",
+    "typescript"
+  ]
+}
