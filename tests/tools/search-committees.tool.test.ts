@@ -223,8 +223,7 @@ describe('searchCommittees', () => {
  * advertises links and sources via `include` (memberships already surfaced), but the tool output
  * schema declared neither — so Zod stripped the keys on the structuredContent path and format()
  * never rendered them on the content[] path, even though the service already carried them through
- * verbatim. Fixture shapes mirror the Committee interface in src/services/openstates/types.ts
- * (links is PersonLink[] = { note, url }).
+ * verbatim.
  */
 describe('searchCommittees — include enrichment surfacing (links, sources)', () => {
   const enrichedCommittee = {

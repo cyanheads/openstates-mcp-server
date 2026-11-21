@@ -6,6 +6,12 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { escapeMarkdownInline, markdownLink } from '@cyanheads/mcp-ts-core/utils';
+import {
+  eventAgendaSchema,
+  formatAgendaRelatedEntity,
+  projectEventAgenda,
+} from '@/mcp-server/tools/event-agenda.js';
+import { linkSchema, sourceLinkSchema } from '@/mcp-server/tools/link-schema.js';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const EventIncludeEnum = z.enum([
@@ -28,15 +34,11 @@ const attachmentFields = (noun: string) => ({
     .describe(`${noun} classification. Empty string when Open States recorded none.`),
   links: z
     .array(
-      z
-        .object({
-          url: z.string().describe(`${noun} URL.`),
-          note: z
-            .string()
-            .optional()
-            .describe('Link description. Absent when Open States recorded none.'),
-        })
-        .describe(`One URL for this ${noun.toLowerCase()} record.`),
+      linkSchema(
+        `${noun} URL.`,
+        'Link description.',
+        `One URL for this ${noun.toLowerCase()} record.`,
+      ),
     )
     .describe(`URLs for this ${noun.toLowerCase()} record — usually one, occasionally none.`),
 });
@@ -114,16 +116,7 @@ export const getEvent = tool('openstates_get_event', {
       .optional()
       .describe('Event location when available.'),
     links: z
-      .array(
-        z
-          .object({
-            url: z.string().describe('Link URL.'),
-            note: z
-              .string()
-              .describe('Link description. Empty string when Open States recorded no description.'),
-          })
-          .describe('External link record.'),
-      )
+      .array(linkSchema('Link URL.', 'Link description.', 'External link record.'))
       .optional()
       .describe('Event links when include=links is requested.'),
     media: z
@@ -135,16 +128,7 @@ export const getEvent = tool('openstates_get_event', {
       .optional()
       .describe('Attached documents when include=documents is requested.'),
     sources: z
-      .array(
-        z
-          .object({
-            url: z.string().describe('Source URL.'),
-            note: z
-              .string()
-              .describe('Source note. Empty string when Open States recorded no note.'),
-          })
-          .describe('Source record.'),
-      )
+      .array(sourceLinkSchema)
       .optional()
       .describe('Provenance sources when include=sources is requested.'),
     participants: z
@@ -162,30 +146,7 @@ export const getEvent = tool('openstates_get_event', {
       )
       .optional()
       .describe('Participants when include=participants is requested.'),
-    agenda: z
-      .array(
-        z
-          .object({
-            description: z.string().describe('Agenda item description.'),
-            classification: z.array(z.string()).describe('Agenda item classifications.'),
-            subjects: z.array(z.string()).describe('Subject tags.'),
-            related_entities: z
-              .array(
-                z
-                  .object({
-                    name: z.string().describe('Related entity name.'),
-                    entity_type: z
-                      .string()
-                      .describe('Entity type (e.g., "bill", "person", "organization").'),
-                  })
-                  .describe('Related entity record.'),
-              )
-              .describe('Bills, people, or organizations referenced.'),
-          })
-          .describe('Agenda item record.'),
-      )
-      .optional()
-      .describe('Agenda items when include=agenda is requested.'),
+    agenda: eventAgendaSchema,
   }),
   errors: [
     {
@@ -261,19 +222,7 @@ export const getEvent = tool('openstates_get_event', {
             })),
           }
         : {}),
-      ...(event.agenda
-        ? {
-            agenda: event.agenda.map((item) => ({
-              description: item.description,
-              classification: item.classification,
-              subjects: item.subjects,
-              related_entities: item.related_entities.map((e) => ({
-                name: e.name,
-                entity_type: e.entity_type,
-              })),
-            })),
-          }
-        : {}),
+      ...(event.agenda ? { agenda: projectEventAgenda(event.agenda) } : {}),
     };
   },
 
@@ -314,7 +263,7 @@ export const getEvent = tool('openstates_get_event', {
         if (item.subjects.length > 0) lines.push(`  Subjects: ${item.subjects.map(e).join(', ')}`);
         if (item.related_entities.length > 0) {
           lines.push(
-            `  Related: ${item.related_entities.map((r) => `${e(r.name)} (${e(r.entity_type)})`).join(', ')}`,
+            `  Related: ${item.related_entities.map(formatAgendaRelatedEntity).join(', ')}`,
           );
         }
       }
@@ -326,7 +275,7 @@ export const getEvent = tool('openstates_get_event', {
       lines.push(`## ${heading}`);
       for (const item of rendered) lines.push(`- ${item}`);
     };
-    const linkItems = (items: { url: string; note: string }[] | undefined) =>
+    const linkItems = (items: z.infer<typeof sourceLinkSchema>[] | undefined) =>
       (items ?? []).map((i) => markdownLink(i.note || i.url, i.url));
     list('Links', linkItems(result.links));
     list('Media', (result.media ?? []).map(attachmentText));

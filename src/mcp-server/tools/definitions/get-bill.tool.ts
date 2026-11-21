@@ -6,7 +6,9 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { escapeMarkdownInline as esc, markdownLink } from '@cyanheads/mcp-ts-core/utils';
+import { sourceLinkSchema } from '@/mcp-server/tools/link-schema.js';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
+import { billVotes, formatVote } from '../bill-votes.js';
 
 /**
  * The UUID half of an OCD bill ID, 8-4-4-4-12 hex. Fully anchored and fixed-width, and tested
@@ -194,49 +196,7 @@ export const getBill = tool('openstates_get_bill', {
       )
       .optional()
       .describe('Full action history when include=actions is requested.'),
-    votes: z
-      .array(
-        z
-          .object({
-            id: z.string().describe('Vote event ID.'),
-            motion_text: z.string().describe('Motion text.'),
-            start_date: z
-              .string()
-              .describe('Vote date. Empty string when Open States recorded no date.'),
-            result: z.string().describe('Vote result: "pass" or "fail".'),
-            identifier: z.string().describe('Vote identifier.'),
-            counts: z
-              .array(
-                z
-                  .object({
-                    option: z.string().describe('Vote option (e.g., "yes", "no", "absent").'),
-                    value: z.number().describe('Count of votes for this option.'),
-                  })
-                  .describe('Vote tally entry.'),
-              )
-              .describe('Vote tallies by option.'),
-            votes: z
-              .array(
-                z
-                  .object({
-                    option: z.string().describe('How this legislator voted.'),
-                    voter_name: z.string().describe('Voter name.'),
-                    voter: z
-                      .object({
-                        id: z.string().describe('OCD person ID.'),
-                        name: z.string().describe('Person name.'),
-                      })
-                      .optional()
-                      .describe('Linked person record when available.'),
-                  })
-                  .describe('Individual legislator vote.'),
-              )
-              .describe('Per-legislator vote positions.'),
-          })
-          .describe('Vote event record.'),
-      )
-      .optional()
-      .describe('Vote events when include=votes is requested.'),
+    votes: billVotes,
     abstracts: z
       .array(
         z
@@ -352,16 +312,7 @@ export const getBill = tool('openstates_get_bill', {
       .optional()
       .describe('Alternate identifiers when include=other_identifiers is requested.'),
     sources: z
-      .array(
-        z
-          .object({
-            url: z.string().describe('Source URL.'),
-            note: z
-              .string()
-              .describe('Source note. Empty string when Open States recorded no note.'),
-          })
-          .describe('Source record.'),
-      )
+      .array(sourceLinkSchema)
       .optional()
       .describe('Source documents when include=sources is requested.'),
   }),
@@ -520,23 +471,7 @@ export const getBill = tool('openstates_get_bill', {
     if (result.votes?.length) {
       lines.push('');
       lines.push('## Votes');
-      for (const v of result.votes) {
-        lines.push(`### ${esc(v.motion_text)}${v.start_date ? ` (${esc(v.start_date)})` : ''}`);
-        lines.push(
-          `**Result:** ${esc(v.result)} | **ID:** ${esc(v.id)} | **Identifier:** ${esc(v.identifier)}`,
-        );
-        const counts = v.counts.map((c) => `${esc(c.option)}: ${c.value}`).join(', ');
-        lines.push(`**Tally:** ${counts}`);
-        if (v.votes.length > 0) {
-          lines.push('**Individual votes:**');
-          for (const pv of v.votes) {
-            const voterLink = pv.voter
-              ? ` (ID: ${esc(pv.voter.id)}, name: ${esc(pv.voter.name)})`
-              : '';
-            lines.push(`- ${esc(pv.voter_name)}${voterLink}: ${esc(pv.option)}`);
-          }
-        }
-      }
+      for (const vote of result.votes) lines.push(...formatVote(vote));
     }
 
     if (result.versions?.length) {

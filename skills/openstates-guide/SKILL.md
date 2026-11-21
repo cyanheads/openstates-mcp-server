@@ -3,7 +3,7 @@ name: openstates-guide
 description: Identifier chains and gates for the openstates_* tools (US state legislatures via Open States). Use when tracing a state bill's fate, votes, or sponsors; finding who represents a location and their committees; finding hearings; or comparing states. Read before naming a bill, reporting who voted how, or concluding that a record, vote, or hearing does not exist.
 license: Apache-2.0
 metadata:
-  author: cyanheads
+  author: "cyanheads"
   version: "1.0"
 ---
 
@@ -20,10 +20,10 @@ State legislatures through Open States: bills, votes, legislators, committees, a
 |:---|:-----|:-----------|:------|
 | Jurisdiction | `ocd-jurisdiction/country:us/state:tx/government`; tools also take `Texas` or `tx` | openstates_list_jurisdictions | every jurisdiction input, including the jurisdiction resource URI |
 | Session | `89R`, `892`, `20252026`, `2025-2026` | the `identifier` of each legislative session from openstates_get_jurisdiction | session filters, the openstates_get_bill path lookup |
-| Bill (OCD) | `ocd-bill/<uuid>` | `id` on openstates_search_bills results | openstates_get_bill direct lookup, copied verbatim |
-| Bill (legislature) | `HB 2`, `SB 1090` | a bill's `identifier`, its related bills, event agenda entries | openstates_get_bill with jurisdiction and session |
-| Person | `ocd-person/<uuid>` | legislator results, sponsorships, vote positions, committee memberships | openstates_search_people by id; the bill sponsor filter |
-| Committee | `ocd-organization/<uuid>` | openstates_search_committees | openstates_get_committee; the parent filter for subcommittees |
+| Bill (OCD) | `ocd-bill/<uuid>` | bill search results or a linked agenda bill's `bill.id` | openstates_get_bill as `openstates_id` |
+| Bill (legislature) | `HB 2`, `SB 1090` | bill identifiers, related bills, and agenda references | openstates_get_bill with jurisdiction and session |
+| Person | `ocd-person/<uuid>` | legislator results, sponsorships, vote positions, committee memberships, and linked agenda people | openstates_search_people in the `id` array or the bill sponsor filter |
+| Committee | `ocd-organization/<uuid>` | openstates_search_committees or a linked committee on an agenda | openstates_get_committee as `committee_id` or the parent filter for subcommittees |
 | Event | `ocd-event/<uuid>` | openstates_search_events | openstates_get_event |
 
 A person ID is stable across sessions. A bill's IDs are not: a bill reintroduced next session gets a new identifier and a new OCD ID.
@@ -34,7 +34,7 @@ A person ID is stable across sessions. A bill's IDs are not: a bill reintroduced
 
 **Unicameral bodies have no upper or lower chamber.** Nebraska and DC classify their members and bills as `legislature`, so an upper or lower chamber filter matches nothing there. Leave chamber filters off; on openstates_search_people, the `legislature` role filter returns their members.
 
-**Read votes one event at a time.** A bill usually carries several vote events (committee, each reading, concurrence, both chambers), and their motion text can be identical: all five vote events on Texas's `89R` `HB 2` read "passage". Identify each by its date and tally, and match it to the same-date entry in the action history to name the chamber and stage. Never add tallies across events.
+**Read votes one event at a time.** Motion text can repeat across committees, readings, and chambers. Use the vote's `organization` to name the voting body and `motion_classification` to identify the recorded motion type. If either is missing or you need more detail about the stage, consult the action history for context. When several actions share the vote's date, report only what the records establish. Keep each vote's tally separate.
 
 - Name who voted no only from the per-legislator positions. Some events carry a tally with no positions, and a tally can disagree with the positions listed; say so rather than reconcile them.
 - Absent and not-voting positions are not votes against.
@@ -50,7 +50,10 @@ A person ID is stable across sessions. A bill's IDs are not: a bill reintroduced
 - Names repeat across chambers (Washington has two "Agriculture and Natural Resources" committees), so report a committee with its chamber or ID.
 - Committee data is experimental. A legislator missing from every roster, or a state with no committees, means Open States lacks the data, not that no assignments exist. A membership whose person ID is empty carries a name only: match those by name, and say the match is unresolved.
 
-**Find hearings by date, then filter the topic yourself.** openstates_search_events takes no keyword. Bound it with dates, include the agenda, and match the topic against agenda descriptions and subjects. Agenda entries name bills by identifier only; resolve each with openstates_get_bill using the jurisdiction, the session in effect on the event date, and that identifier. Most states publish few or no events, and a state's events may link no bills at all, so the bills-on-agenda filter can empty a state that does hold events. Report "no hearings found in Open States", never "no hearings scheduled".
+**Find hearings by date, then filter the topic yourself.** openstates_search_events takes no keyword. Bound it with dates, include the agenda, and match the topic against agenda descriptions and subjects. Most states publish few or no events, and a state's events may link no bills at all, so the bills-on-agenda filter can hide events. Report "no hearings found in Open States" when the search comes back empty.
+
+- Prefer linked IDs in `agenda[].related_entities`. Pass `bill.id` as `openstates_id`, `person.id` in the `id` array, and `organization.id` as `committee_id` when the organization is a committee. Vote IDs identify roll calls, and the bill tools return roll calls with `include: ["votes"]`. There is no standalone vote lookup.
+- Linked bills may also carry their `identifier` and `session`. If an agenda reference has only a bill name, look it up by jurisdiction, session, and identifier once the session is established. Use event dates to narrow the candidates and leave the reference unresolved if several sessions fit.
 
 **Compare states with full-text search, one state at a time.** Subject tags are each state's own scraper vocabulary. California's are run-together phrases (`housingdevelopmentapprovals`) and Washington assigns none, so a subject filter does not carry across states. Run the same query per jurisdiction with each state's own session pinned, and compare outcomes through action classifications.
 

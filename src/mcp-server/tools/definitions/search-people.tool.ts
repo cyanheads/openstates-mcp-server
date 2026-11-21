@@ -12,6 +12,7 @@ import {
   markdownImage,
   markdownLink,
 } from '@cyanheads/mcp-ts-core/utils';
+import { linkSchema, sourceLinkSchema } from '@/mcp-server/tools/link-schema.js';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const PersonIncludeEnum = z.enum([
@@ -151,16 +152,11 @@ export const searchPeople = tool('openstates_search_people', {
               .describe('Contact offices when include=offices is requested.'),
             links: z
               .array(
-                z
-                  .object({
-                    url: z.string().describe('Link URL.'),
-                    note: z
-                      .string()
-                      .describe(
-                        'Link description (e.g., "website", "twitter"). Empty string when Open States recorded no description — common on person links.',
-                      ),
-                  })
-                  .describe('External link record.'),
+                linkSchema(
+                  'Link URL.',
+                  'Link description (e.g., "website", "twitter"). Blank notes are common on person links.',
+                  'External link record.',
+                ),
               )
               .optional()
               .describe('Website and social links when include=links is requested.'),
@@ -191,16 +187,7 @@ export const searchPeople = tool('openstates_search_people', {
               .optional()
               .describe('Cross-system identifiers when include=other_identifiers is requested.'),
             sources: z
-              .array(
-                z
-                  .object({
-                    url: z.string().describe('Source URL.'),
-                    note: z
-                      .string()
-                      .describe('Source note. Empty string when Open States recorded no note.'),
-                  })
-                  .describe('Source record.'),
-              )
+              .array(sourceLinkSchema)
               .optional()
               .describe('Provenance sources when include=sources is requested.'),
           })

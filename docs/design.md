@@ -144,14 +144,14 @@ The primary entry point. Supports both full-text and structured filtering.
     // When requested via include:
     sponsorships?: BillSponsorship[];
     actions?: BillAction[];
-    votes?: CompactVoteEvent[];
+    votes?: BillVoteEvent[];
     abstracts?: BillAbstract[];
     versions?: BillDocumentOrVersion[];
     documents?: BillDocumentOrVersion[];
     related_bills?: RelatedBill[];
     other_titles?: Array<{ title: string; note: string }>;
     other_identifiers?: Array<{ identifier: string; scheme?: string }>;
-    sources?: Array<{ url: string; note: string }>;
+    sources?: Link[];
   }>;
   pagination: {
     page: number;
@@ -161,6 +161,23 @@ The primary entry point. Supports both full-text and structured filtering.
   };
 }
 ```
+
+Both bill tools expose the same vote event shape. The voting body and motion classifications come from the vote record. Missing metadata stays missing, and an explicitly empty classification array stays empty.
+
+```ts
+type BillVoteEvent = {
+  id: string; motion_text: string; start_date: string;
+  result: string; identifier: string;
+  organization?: { id?: string | null; name?: string | null; classification?: string | null } | null;
+  motion_classification?: string[] | null;
+  counts: Array<{ option: string; value: number }>;
+  votes: Array<{ option: string; voter_name: string; voter?: { id: string; name: string } }>;
+};
+
+type Link = { url: string; note?: string };
+```
+
+Top-level `links` and `sources` preserve an omitted or empty note in structured output. The Markdown label for HTTP(S) URLs uses a non-empty note or the URL. Other URL schemes render literally. Event attachment links also accept omitted notes and can use the attachment's note as their label. The note on the attachment record itself remains required, as do notes on bill versions, documents, abstracts, and other titles.
 
 **Errors:**
 ```ts
@@ -238,19 +255,14 @@ upstream 404s with the valid range, which the tool surfaces before the notice pa
     classification: string[]; order: number;
     organization: { name, classification };
   }>;
-  votes?: Array<{
-    id: string; motion_text: string; start_date: string;
-    result: string; identifier: string;
-    counts: Array<{ option: string; value: number }>;
-    votes: Array<{ id: string; option: string; voter_name: string; voter?: CompactPerson }>;
-  }>;
+  votes?: BillVoteEvent[];
   abstracts?: Array<{ abstract: string; note: string }>;
   versions?: Array<{ id: string; note: string; date: string; links: Array<{ url, media_type }> }>;
   documents?: Array<{ id: string; note: string; date: string; links: Array<{ url, media_type }> }>;
   related_bills?: Array<{ identifier: string; legislative_session: string; relation_type: string }>;
   other_titles?: Array<{ title: string; note: string }>;
   other_identifiers?: Array<{ identifier: string; scheme?: string }>;
-  sources?: Array<{ url: string; note: string }>;
+  sources?: Link[];
 }
 ```
 
@@ -314,10 +326,10 @@ errors: [
     openstates_url: string;
     // When included:
     offices?: Array<{ name, classification, voice?, fax?, address? }>;
-    links?: Array<{ url, note }>;
+    links?: Link[];
     other_names?: Array<{ name, note }>;
     other_identifiers?: Array<{ identifier, scheme }>;
-    sources?: Array<{ url, note }>;
+    sources?: Link[];
   }>;
   pagination: { page, per_page, max_page, total_items };
 }
@@ -410,10 +422,10 @@ High-value constituent lookup — no equivalent in congressgov-mcp-server (which
     email: string;
     openstates_url: string;
     offices?: Array<{ name, classification, voice?, fax?, address? }>;
-    links?: Array<{ url, note }>;
+    links?: Link[];
     other_names?: Array<{ name, note }>;
     other_identifiers?: Array<{ identifier, scheme }>;
-    sources?: Array<{ url, note }>;
+    sources?: Link[];
   }>;
   count: number;
   stateCount: number;      // jurisdiction.classification === "state"
@@ -472,8 +484,8 @@ errors: [
       role: string;
       person?: CompactPerson;
     }>;
-    links?: Array<{ url, note }>;
-    sources?: Array<{ url, note }>;
+    links?: Link[];
+    sources?: Link[];
   }>;
   pagination: { page, per_page, max_page, total_items };
   coverage_note?: string;  // "Committee data is experimental — not all states have coverage."
@@ -539,7 +551,7 @@ errors: [
 | `after` | `string` optional | ISO 8601 datetime — events starting after this time. Use to find upcoming hearings. |
 | `before` | `string` optional | ISO 8601 datetime — events starting before this time. |
 | `require_bills` | `boolean` default false | When true, only return events with at least one bill on the agenda. Most useful for tracking legislation. |
-| `include` | `array(z.enum(['links', 'sources', 'media', 'documents', 'participants', 'agenda']))` optional | `agenda` includes the meeting agenda with bill references. `participants` includes the committee/chamber hosting the event. |
+| `include` | `array(z.enum(['links', 'sources', 'media', 'documents', 'participants', 'agenda']))` optional | `agenda` includes the meeting agenda and related records. `participants` includes the committee/chamber hosting the event. |
 | `page` | `number` default 1 | |
 | `per_page` | `number` default 10 max 20 | |
 
@@ -556,21 +568,32 @@ errors: [
     status: string;
     jurisdiction: { id, name };
     location?: { name, url, coordinates };
-    links?: Array<{ url, note }>;
-    sources?: Array<{ url, note }>;
-    media?: Array<{ note, date, classification, offset?, links: Array<{ url, note? }> }>;
-    documents?: Array<{ note, date, classification, links: Array<{ url, note? }> }>;
+    links?: Link[];
+    sources?: Link[];
+    media?: Array<{ note, date, classification, offset?, links: Link[] }>;
+    documents?: Array<{ note, date, classification, links: Link[] }>;
     participants?: Array<{ name, entity_type, role?, organization?, person? }>;
     agenda?: Array<{
       description: string;
       classification: string[];
       subjects: string[];
-      related_entities: Array<{ name, entity_type, bill?, organization?, person? }>;
+      related_entities: AgendaRelatedEntity[];
     }>;
   }>;
   pagination: { page, per_page, max_page, total_items };
 }
+
+type AgendaRelatedEntity = {
+  name: string;
+  entity_type: string;
+  bill?: { id: string; identifier?: string; session?: string };
+  organization?: { id: string; classification?: string };
+  person?: { id: string };
+  vote?: { id: string };
+};
 ```
+
+Both event tools keep the agenda reference's name and type even when Open States supplies no linked record. Use a linked bill's ID as `openstates_get_bill.openstates_id`, a person ID in the `openstates_search_people.id` array, or a committee's organization ID as `openstates_get_committee.committee_id`. The vote ID identifies the roll call. Bill tools expose roll calls through `include: ["votes"]`. There is no standalone vote lookup.
 
 **Errors:**
 ```ts
@@ -614,16 +637,16 @@ errors: [
   status: string;
   jurisdiction: { id: string; name: string };
   location?: { name: string; url?: string; coordinates?: unknown };
-  links?: Array<{ url: string; note: string }>;
-  media?: Array<{ note: string; date: string; classification: string; offset?: number; links: Array<{ url: string; note?: string }> }>;
-  documents?: Array<{ note: string; date: string; classification: string; links: Array<{ url: string; note?: string }> }>;
-  sources?: Array<{ url: string; note: string }>;
+  links?: Link[];
+  media?: Array<{ note: string; date: string; classification: string; offset?: number; links: Link[] }>;
+  documents?: Array<{ note: string; date: string; classification: string; links: Link[] }>;
+  sources?: Link[];
   participants?: Array<{ name: string; entity_type: string; role?: string; organization?: unknown; person?: unknown }>;
   agenda?: Array<{
     description: string;
     classification: string[];
     subjects: string[];
-    related_entities: Array<{ name: string; entity_type: string; bill?: unknown; organization?: unknown; person?: unknown }>;
+    related_entities: AgendaRelatedEntity[];
   }>;
 }
 ```

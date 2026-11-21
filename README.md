@@ -72,6 +72,7 @@ Plugin installs and the `.mcpb` bundle pick it up from `skills/`; MCP clients th
 - Either `jurisdiction` or `q` is required by the schema — a `q`-only search spans all 56 jurisdictions and exceeds the upstream timeout for a common term, so pairing them is the reliable form
 - Filters: `session`, `chamber` (`upper`/`lower`), `classification`, `subject` tags, `sponsor`, `sponsor_classification`, and `action_since`/`updated_since`/`created_since` ISO 8601 date filters
 - `include` inlines sponsorships, actions, votes, abstracts, versions, documents, and related bills — avoids follow-up `openstates_get_bill` calls
+- Each included vote carries its recorded voting `organization` (ID, name, classification) and `motion_classification` when available
 - `sort` defaults to `updated_desc`; `sort=latest_action_desc` surfaces bills currently moving; pagination up to 20 per page (default 10)
 - Empty-result notice echoes every applied filter and names the jurisdiction by name when it isn't recognized
 
@@ -80,9 +81,10 @@ Plugin installs and the `.mcpb` bundle pick it up from `skills/`; MCP clients th
 ### `openstates_get_bill` <sub>tool</sub>
 
 - Lookup by `openstates_id` (preferred) or the three-part path `jurisdiction` + `session` + `bill_id`; a call missing both fails with `missing_lookup_params`
-- `openstates_id` is `ocd-bill/<uuid>` copied from `openstates_search_bills` (case and surrounding whitespace are normalized); a `<jurisdiction>/<session>/<bill_id>` path is also accepted. Any other value fails locally with `invalid_openstates_id`, with no upstream call
+- `openstates_id` is `ocd-bill/<uuid>` from bill search or an event agenda's linked bill. Case and surrounding whitespace are normalized. A `<jurisdiction>/<session>/<bill_id>` path is also accepted. Any other value fails locally with `invalid_openstates_id`, with no upstream call
 - Accepts legislature-format bill identifiers (e.g., `HB 1000`, `SB 42`)
 - `include` inlines sponsorships, actions, votes, versions, documents, abstracts, other titles/identifiers, and related bills
+- Each included vote carries its recorded voting `organization` (ID, name, classification) and `motion_classification` when available
 - `not_found` when a well-formed ID or a three-part path resolves to nothing
 
 ---
@@ -130,7 +132,7 @@ Plugin installs and the `.mcpb` bundle pick it up from `skills/`; MCP clients th
 
 - `jurisdiction` is required — the events endpoint has no all-states search
 - `after`/`before` scope to an ISO 8601 date range; `require_bills=true` filters to events with a bill on the agenda
-- `include=agenda,participants` returns full meeting context
+- `include` adds meeting context through `agenda` and `participants`. Agenda references retain their names and types and include supplied bill, organization, person, and vote IDs. Linked bills may also carry an identifier and session, and linked organizations may carry a classification
 - Experimental: most states don't publish event data — an empty unfiltered result may mean no coverage, not no events; an empty filtered result (`require_bills`, `after`, `before`) names those filters in its notice
 - Pagination up to 20 per page
 
@@ -139,7 +141,7 @@ Plugin installs and the `.mcpb` bundle pick it up from `skills/`; MCP clients th
 ### `openstates_get_event` <sub>tool</sub>
 
 - Fetch by OCD `event_id` (from `openstates_search_events`)
-- `include` adds agenda, participants, links, media, and documents
+- `include` adds agenda, participants, links, sources, media, and documents. Agenda references carry the same IDs and metadata as event search
 - Experimental — event coverage is limited; `not_found` when the ID doesn't exist
 
 ---
@@ -200,6 +202,7 @@ Agent-friendly output:
 - Empty-result recovery: search tools echo the applied filters and suggest how to broaden when no results are returned
 - Experimental coverage notes (`coverageNote`) on committee and event tools — surfaces the limitation instead of a silent empty result
 - `include` parameter pattern across all search and get tools — avoids N+1 follow-up calls for common research workflows
+- Source and reference URLs can omit `note`. Top-level HTTP(S) links use the URL as their Markdown label when the note is absent or empty
 
 ## Getting started
 
@@ -288,7 +291,7 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 OPENSTATES_API_KEY=your-key bun run s
 
 ### Prerequisites
 
-- [Bun v1.4.0](https://bun.sh/) or higher (or Node.js v24+).
+- [Bun v1.4.4](https://bun.sh/) or higher (or Node.js v24+).
 - An Open States API key — register free at [open.pluralpolicy.com](https://open.pluralpolicy.com/accounts/profile/).
 
 ### Installation
@@ -332,17 +335,19 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http`. | `stdio` |
 | `MCP_SESSION_MODE` | HTTP session mode: `auto`, `stateful`, or `stateless`. `src/index.ts` declares `stateless` via `createApp({ sessionMode })` — no tool suspends for caller input, so no session state is needed. Setting this overrides the declaration; the framework schema default is `auto`, which resolves to stateful. | `stateless` |
 | `MCP_HTTP_PORT` | HTTP server port. | `3010` |
-| `MCP_HTTP_ENDPOINT_PATH` | HTTP endpoint path. | `/mcp` |
-| `MCP_PUBLIC_URL` | Public origin override for TLS-terminating reverse-proxy deployments. | none |
+| `MCP_HTTP_ENDPOINT_PATH` | HTTP route path. Startup rejects a full URL, query, fragment, or route pattern. | `/mcp` |
+| `MCP_PUBLIC_URL` | Public HTTP(S) base URL for a reverse proxy, with optional port and path prefix. Omit credentials, query, and fragment. | none |
 | `MCP_AUTH_MODE` | Auth mode: `none`, `jwt`, or `oauth`. | `none` |
 | `MCP_LOG_LEVEL` | Log level (`debug`, `info`, `notice`, `warning`, `error`). | `info` |
 | `MCP_GC_PRESSURE_INTERVAL_MS` | Opt-in Bun-only forced-GC interval (ms). Try `60000` if heap grows under sustained HTTP load. | `0` (disabled) |
-| `LOGS_DIR` | Directory for log files (Node.js only). | `<project-root>/logs` |
+| `LOGS_DIR` | Directory for log files (Node.js only). Relative paths resolve from the server package root. | `<server-package-root>/logs` |
 | `STORAGE_PROVIDER_TYPE` | Storage backend: `in-memory`, `filesystem`, `supabase`, `cloudflare-kv/r2/d1`. | `in-memory` |
 | `OTEL_ENABLED` | Enable OpenTelemetry instrumentation. | `false` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP base URL; traces go to `/v1/traces` and metrics to `/v1/metrics`. | none |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | Opt-in OTLP log export (e.g. `http://localhost:4318/v1/logs`); the base endpoint never enables it. | none |
 | `LOG_TOOL_FAILURE_PAYLOADS` | Log each failed tool call's arguments and result, redacted by key name only, capped by `LOG_TOOL_FAILURE_PAYLOAD_MAX_BYTES` (default `16384`). | `false` |
+
+With filesystem storage, the first startup on the new layout copies existing data into `_v2/` under the storage path and leaves the original tenant directories in place. Upgrade all instances that share the path together and allow space for both copies.
 
 See [`.env.example`](./.env.example) for the full list of optional overrides.
 

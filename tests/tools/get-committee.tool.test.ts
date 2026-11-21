@@ -117,8 +117,7 @@ describe('getCommittee', () => {
  * layers: the handler rebuilds its return object field-by-field and copied only
  * id/name/classification/parent_id/memberships, and the output schema declared no fields for
  * links/sources — so both the structuredContent and content[] paths lost the data. Driving
- * through the handler proves the rebuild now carries them. Fixture shapes mirror the Committee
- * interface in src/services/openstates/types.ts (links is PersonLink[] = { note, url }).
+ * through the handler proves the rebuild now carries them.
  */
 describe('getCommittee — include enrichment surfacing (links, sources)', () => {
   const enrichedCommittee = {

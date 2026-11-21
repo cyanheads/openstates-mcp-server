@@ -36,6 +36,12 @@ export interface CompactPerson {
   name: string;
 }
 
+/** A link or provenance source as Open States returns it. */
+export interface OpenStatesLink {
+  note?: string;
+  url: string;
+}
+
 // --- Bill types ---
 
 export interface BillAbstract {
@@ -89,7 +95,13 @@ export interface VoteEvent {
   counts: VoteCount[];
   id: string;
   identifier: string;
+  motion_classification?: string[] | null;
   motion_text: string;
+  organization?: {
+    id?: string | null;
+    name?: string | null;
+    classification?: string | null;
+  } | null;
   result: string;
   start_date: string;
   votes: PersonVote[];
@@ -123,7 +135,7 @@ export interface Bill {
   other_titles?: Array<{ title: string; note: string }>;
   related_bills?: RelatedBill[];
   session: string;
-  sources?: Array<{ url: string; note: string }>;
+  sources?: OpenStatesLink[];
   sponsorships?: BillSponsorship[];
   subject: string[];
   title: string;
@@ -168,11 +180,6 @@ export interface PersonOffice {
   voice?: string;
 }
 
-export interface PersonLink {
-  note: string;
-  url: string;
-}
-
 export interface RawPerson {
   current_role?: PersonRole | null;
   email?: string;
@@ -182,14 +189,14 @@ export interface RawPerson {
   /** Official headshot URL. Absent for members with no published photo. */
   image?: string;
   jurisdiction?: CompactJurisdiction;
-  links?: PersonLink[];
+  links?: OpenStatesLink[];
   name: string;
   offices?: PersonOffice[];
   openstates_url?: string;
   other_identifiers?: Array<{ identifier: string; scheme: string }>;
   other_names?: Array<{ name: string; note: string }>;
   party?: string | Array<{ name: string; end_date?: string | null }>;
-  sources?: Array<{ url: string; note: string }>;
+  sources?: OpenStatesLink[];
 }
 
 export interface Person {
@@ -201,14 +208,14 @@ export interface Person {
   /** Official headshot URL. Omitted when upstream carries no photo for the member. */
   image?: string;
   jurisdiction: CompactJurisdiction;
-  links?: PersonLink[];
+  links?: OpenStatesLink[];
   name: string;
   offices?: PersonOffice[];
   openstates_url: string;
   other_identifiers?: Array<{ identifier: string; scheme: string }>;
   other_names?: Array<{ name: string; note: string }>;
   party: string;
-  sources?: Array<{ url: string; note: string }>;
+  sources?: OpenStatesLink[];
 }
 
 export interface PersonListResponse {
@@ -229,11 +236,11 @@ export interface Committee {
   classification: string;
   id: string;
   jurisdiction?: CompactJurisdiction;
-  links?: PersonLink[];
+  links?: OpenStatesLink[];
   memberships?: CommitteeMembership[];
   name: string;
   parent_id: string | null;
-  sources?: Array<{ url: string; note: string }>;
+  sources?: OpenStatesLink[];
 }
 
 export interface CommitteeListResponse {
@@ -259,11 +266,12 @@ export interface EventParticipant {
 }
 
 export interface AgendaRelatedEntity {
-  bill?: unknown;
+  bill?: { id?: string | null; identifier?: string | null; session?: string | null } | null;
   entity_type: string;
   name: string;
-  organization?: unknown;
-  person?: unknown;
+  organization?: { id?: string | null; classification?: string | null } | null;
+  person?: { id?: string | null } | null;
+  vote?: { id?: string | null } | null;
 }
 
 export interface AgendaItem {
@@ -273,12 +281,6 @@ export interface AgendaItem {
   subjects: string[];
 }
 
-/** One URL on an event media or document record. Open States usually sends `url` alone. */
-export interface EventAttachmentLink {
-  note?: string;
-  url: string;
-}
-
 /**
  * Open States `EventDocument`: the URLs sit in `links[]`, not on the record. `date` and
  * `classification` arrive as `""` when unrecorded.
@@ -286,7 +288,7 @@ export interface EventAttachmentLink {
 export interface EventDocument {
   classification: string;
   date: string;
-  links: EventAttachmentLink[];
+  links: OpenStatesLink[];
   note: string;
 }
 
@@ -303,12 +305,12 @@ export interface Event {
   end_date: string | undefined;
   id: string;
   jurisdiction: CompactJurisdiction;
-  links?: PersonLink[];
+  links?: OpenStatesLink[];
   location?: EventLocation;
   media?: EventMedia[];
   name: string;
   participants?: EventParticipant[];
-  sources?: Array<{ url: string; note: string }>;
+  sources?: OpenStatesLink[];
   start_date: string;
   status: string;
 }

@@ -717,6 +717,8 @@ function fullBill(text: (slot: Slot) => string, url: (n: number) => string) {
   const vote = (withVoter: boolean) => ({
     id: t(),
     motion_text: h(),
+    motion_classification: [t(), t()],
+    organization: { id: t(), name: t(), classification: t() },
     start_date: h(), // rendered in the vote heading beside motion_text
     result: t(),
     identifier: t(),
@@ -789,7 +791,38 @@ function fullBill(text: (slot: Slot) => string, url: (n: number) => string) {
 }
 
 /** String leaves `fullBill` fills through `text` — pinned so a fixture that loses a field fails. */
-const TEXT_LEAVES = 105;
+const TEXT_LEAVES = 115;
+
+it('keeps sparse vote metadata distinct from supplied values on the roll call', () => {
+  const vote = {
+    id: 'ocd-vote/1',
+    identifier: '1',
+    start_date: '',
+    motion_text: 'passage',
+    result: 'pass',
+    counts: [],
+    votes: [],
+  };
+  const votes = [
+    vote,
+    { ...vote, organization: null, motion_classification: null },
+    { ...vote, organization: { name: '', classification: null }, motion_classification: [''] },
+    { ...vote, organization: { name: 'Joint Committee' }, motion_classification: [] },
+    {
+      ...vote,
+      organization: { id: 'ocd-organization/2', name: 'Senate', classification: 'upper' },
+      motion_classification: ['amendment', 'passage'],
+    },
+  ];
+  const bill = getBill.output.parse({ ...baseBill, votes });
+  expect(bill.votes).toStrictEqual(votes);
+  const text = readBack(textOf(getBill.format!(bill))).join('\n');
+  expect(text).toContain('Voting organization: null');
+  expect(text).toContain('Motion classification: null');
+  expect(text).toContain('name: ""');
+  expect(text).toContain('classification: null');
+  expect(text).toContain('Motion classification: ""');
+});
 
 describe('getBill format — upstream strings read back literally (issue #53)', () => {
   const plainUrl = (n: number) => `https://example.org/u${n}`;
@@ -843,12 +876,10 @@ describe('getBill format — URL fields render as links (issue #53)', () => {
 
   it('renders every URL field as one link: href is the URL, label the note or media type', () => {
     let n = 0;
-    const bill = getBill.output.parse(
-      fullBill(() => `f${String(n++).padStart(3, '0')}`, hostileUrl),
-    );
+    const bill = fullBill(() => `f${String(n++).padStart(3, '0')}`, hostileUrl);
     const linkTo = (href: string, label: string) => ({ href: normalizeLink(href), label });
 
-    expect(links(textOf(getBill.format!(bill)))).toEqual([
+    expect(links(textOf(getBill.format!(getBill.output.parse(bill))))).toEqual([
       linkTo(bill.openstates_url!, bill.openstates_url!),
       ...bill.versions!.flatMap((v) => v.links.map((l) => linkTo(l.url, l.media_type))),
       ...bill.documents!.flatMap((d) => d.links.map((l) => linkTo(l.url, l.media_type))),

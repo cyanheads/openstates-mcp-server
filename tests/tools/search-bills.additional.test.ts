@@ -985,6 +985,8 @@ function fullBill(text: (slot: Slot) => string, url: () => string) {
   const vote = (withVoter: boolean) => ({
     id: t(),
     motion_text: h(),
+    motion_classification: [t(), t()],
+    organization: { id: t(), name: t(), classification: t() },
     start_date: h(), // rendered in the vote heading beside motion_text
     result: t(),
     identifier: t(),
@@ -1057,36 +1059,63 @@ function fullBill(text: (slot: Slot) => string, url: () => string) {
 }
 
 function page(text: (slot: Slot) => string, url: () => string) {
-  return searchBills.output.parse({
+  return {
     results: [fullBill(text, url), fullBill(text, url)],
     pagination: { page: 1, per_page: 2, max_page: 1, total_items: 2 },
-  });
+  };
 }
 
 /** String leaves across the two-bill page — pinned so a fixture that loses a field fails. */
-const TEXT_LEAVES = 210;
+const TEXT_LEAVES = 230;
+
+it('keeps sparse vote metadata distinct from supplied values on the roll call', () => {
+  const vote = {
+    id: 'ocd-vote/1',
+    identifier: '1',
+    start_date: '',
+    motion_text: 'passage',
+    result: 'pass',
+    counts: [],
+    votes: [],
+  };
+  const votes = [
+    vote,
+    { ...vote, organization: null, motion_classification: null },
+    { ...vote, organization: { name: 'Joint Committee' }, motion_classification: [] },
+    {
+      ...vote,
+      organization: { id: 'ocd-organization/2', name: 'Senate', classification: 'upper' },
+      motion_classification: ['amendment', 'passage'],
+    },
+  ];
+  const bill = searchBills.output.parse({
+    results: [{ ...mockBill, votes }],
+    pagination: { page: 1, per_page: 1, total_items: 1, max_page: 1 },
+  }).results[0]!;
+  expect(bill.votes).toStrictEqual(votes);
+});
 
 describe('searchBills format — upstream strings read back literally (issue #53)', () => {
   const urls = () => {
     let u = 0;
     return () => `https://example.org/u${u++}`;
   };
+  const render = (result: ReturnType<typeof page>) =>
+    textOf(searchBills.format!(searchBills.output.parse(result)));
 
   it.each(PAYLOADS)('%s', (_name, payload) => {
     let n = 0;
     const marker = () => `f${String(n++).padStart(3, '0')}`;
-    const benign = textOf(searchBills.format!(page(() => marker(), urls())));
+    const benign = render(page(() => marker(), urls()));
 
     n = 0;
     const values: string[] = [];
-    const hostile = textOf(
-      searchBills.format!(
-        page((slot) => {
-          const value = payload(marker(), slot);
-          values.push(value);
-          return value;
-        }, urls()),
-      ),
+    const hostile = render(
+      page((slot) => {
+        const value = payload(marker(), slot);
+        values.push(value);
+        return value;
+      }, urls()),
     );
 
     expect(values).toHaveLength(TEXT_LEAVES);
@@ -1131,7 +1160,7 @@ describe('searchBills format — URL fields render as links (issue #53)', () => 
     );
     const linkTo = (href: string, label: string) => ({ href: normalizeLink(href), label });
 
-    expect(links(textOf(searchBills.format!(result)))).toEqual(
+    expect(links(textOf(searchBills.format!(searchBills.output.parse(result))))).toEqual(
       result.results.flatMap((bill) => [
         linkTo(bill.openstates_url!, bill.openstates_url!),
         ...bill.versions!.flatMap((v) => v.links.map((l) => linkTo(l.url, l.media_type))),

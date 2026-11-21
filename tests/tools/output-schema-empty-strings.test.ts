@@ -1,6 +1,6 @@
 /**
  * @fileoverview Cross-tool coverage for the output fields Open States sends as `""`: each must
- * document that in its own `.describe()`, and each must stay a required non-nullable string.
+ * document that in its own `.describe()`. Only Link notes may also be omitted.
  * @module tests/tools/output-schema-empty-strings.test
  */
 
@@ -16,6 +16,7 @@ import { searchBills } from '@/mcp-server/tools/definitions/search-bills.tool.js
 import { searchCommittees } from '@/mcp-server/tools/definitions/search-committees.tool.js';
 import { searchEvents } from '@/mcp-server/tools/definitions/search-events.tool.js';
 import { searchPeople } from '@/mcp-server/tools/definitions/search-people.tool.js';
+import { links, readBack } from '../helpers/commonmark.js';
 
 /** The subset of JSON Schema these assertions read. */
 interface SchemaNode {
@@ -63,9 +64,8 @@ const outputSchema = (schema: unknown) => z.toJSONSchema(schema as never) as Sch
 /**
  * Every field the upstream (or this server's own normalization, which substitutes `''` for an
  * absent key) can hand back as an empty string, per tool. Bill version and document dates,
- * legislative session classifications, and person link notes are the frequently-hit ones; the rest
- * share the shape and the same required non-nullable declaration, so a consumer cannot tell `""`
- * from a malformed record on any of them without the description saying so.
+ * legislative session classifications, and person link notes are the frequently-hit ones. Their
+ * descriptions tell callers what an explicit empty string means.
  */
 const BILL_FIELDS = [
   'actions[].date',
@@ -102,7 +102,7 @@ const EVENT_FIELDS = [
   'links[].note',
   'sources[].note',
   ...['media', 'documents'].flatMap((list) =>
-    ['note', 'date', 'classification'].map((field) => `${list}[].${field}`),
+    ['note', 'date', 'classification', 'links[].note'].map((field) => `${list}[].${field}`),
   ),
 ];
 
@@ -152,13 +152,57 @@ describe.each(CASES)('$name — fields that can arrive empty', ({ schema, fields
     expect(facts.get(path)?.description).toMatch(/empty string/i);
   });
 
-  /**
-   * The fix is documentation only. Widening any of these to `.nullable()`/`.optional()` and
-   * normalizing `""` away would discard the distinction between a value upstream left blank and a
-   * key it never sent, and would break every client parsing the current contract.
-   */
-  it.each(fields)('%s stays a required non-nullable string', (path) => {
-    expect(facts.get(path)).toMatchObject({ type: 'string', nullable: false, optional: false });
+  it.each(fields)('%s advertises a non-nullable string with the expected presence', (path) => {
+    const isLinkNote = /(?:^|\.)(?:links|sources)\[\]\.note$/.test(path);
+    expect(facts.get(path)).toMatchObject({
+      type: 'string',
+      nullable: false,
+      optional: isLinkNote,
+    });
+  });
+});
+
+describe('Open States Link rows', () => {
+  const event = {
+    id: 'ocd-event/fixture',
+    name: 'Committee hearing',
+    description: '',
+    classification: 'committee-meeting',
+    start_date: '2025-03-15T09:00:00',
+    status: 'passed',
+    jurisdiction: { id: 'ocd-jurisdiction/fixture', name: 'Washington' },
+  };
+  const url = 'https://example.org/agenda';
+
+  it('keeps the nested attachment label fallback with no note on the link', () => {
+    const attachment = { note: 'Agenda *PDF*', date: '', classification: '', links: [{ url }] };
+    const result = getEvent.output.parse({ ...event, documents: [attachment] });
+    expect(result.documents).toEqual([attachment]);
+    const text = getEvent.format?.(result)?.find((block) => block.type === 'text')?.text ?? '';
+    expect(links(text)).toEqual([{ href: url, label: 'Agenda *PDF*' }]);
+  });
+
+  it('preserves missing and explicit notes and renders each HTTP(S) source with its fallback', () => {
+    const ftp = 'ftp://example.org/archive.xml';
+    const sources = [
+      { url },
+      { url, note: '' },
+      { url, note: 'Source *description*' },
+      { url: ftp, note: '' },
+    ];
+    const result = getEvent.output.parse({ ...event, sources });
+    expect(result.sources).toStrictEqual(sources);
+    const text = getEvent.format?.(result)?.find((block) => block.type === 'text')?.text ?? '';
+    expect(links(text)).toEqual([
+      { href: url, label: url },
+      { href: url, label: url },
+      { href: url, label: 'Source *description*' },
+    ]);
+    expect(readBack(text).join('\n')).toContain(ftp);
+  });
+
+  it.each([{ url, note: null }, { note: '' }])('rejects invalid link %j', (link) => {
+    expect(getEvent.output.safeParse({ ...event, links: [link] }).success).toBe(false);
   });
 });
 

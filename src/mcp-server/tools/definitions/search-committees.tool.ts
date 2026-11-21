@@ -6,6 +6,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { escapeMarkdownInline, markdown, markdownLink } from '@cyanheads/mcp-ts-core/utils';
+import { linkSchema, sourceLinkSchema } from '@/mcp-server/tools/link-schema.js';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
 const CommitteeIncludeEnum = z.enum(['memberships', 'links', 'sources']);
@@ -91,30 +92,16 @@ export const searchCommittees = tool('openstates_search_committees', {
               .describe('Membership roster when include=memberships is requested.'),
             links: z
               .array(
-                z
-                  .object({
-                    url: z.string().describe('Link URL.'),
-                    note: z
-                      .string()
-                      .describe(
-                        'Link description (e.g., "homepage"). Empty string when Open States recorded no description.',
-                      ),
-                  })
-                  .describe('External link record.'),
+                linkSchema(
+                  'Link URL.',
+                  'Link description (e.g., "homepage").',
+                  'External link record.',
+                ),
               )
               .optional()
               .describe('Committee homepage and reference links when include=links is requested.'),
             sources: z
-              .array(
-                z
-                  .object({
-                    url: z.string().describe('Source URL.'),
-                    note: z
-                      .string()
-                      .describe('Source note. Empty string when Open States recorded no note.'),
-                  })
-                  .describe('Source record.'),
-              )
+              .array(sourceLinkSchema)
               .optional()
               .describe('Provenance sources when include=sources is requested.'),
           })
