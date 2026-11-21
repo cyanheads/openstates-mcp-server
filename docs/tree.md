@@ -1,6 +1,6 @@
 # openstates-mcp-server - Directory Structure
 
-Generated on: 2026-10-28 14:50:33
+Generated on: 2026-11-21 18:02:36
 
 ```text
 openstates-mcp-server/
@@ -28,6 +28,7 @@ openstates-mcp-server/
 │   ├── 0.2.x/
 │   ├── 0.3.x/
 │   ├── 0.4.x/
+│   ├── 0.5.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md
@@ -155,17 +156,20 @@ openstates-mcp-server/
 │   │   │   └── definitions/
 │   │   │       └── jurisdiction.resource.ts
 │   │   └── tools/
-│   │       └── definitions/
-│   │           ├── get-bill.tool.ts
-│   │           ├── get-committee.tool.ts
-│   │           ├── get-event.tool.ts
-│   │           ├── get-jurisdiction.tool.ts
-│   │           ├── get-legislators-by-location.tool.ts
-│   │           ├── list-jurisdictions.tool.ts
-│   │           ├── search-bills.tool.ts
-│   │           ├── search-committees.tool.ts
-│   │           ├── search-events.tool.ts
-│   │           └── search-people.tool.ts
+│   │       ├── definitions/
+│   │       │   ├── get-bill.tool.ts
+│   │       │   ├── get-committee.tool.ts
+│   │       │   ├── get-event.tool.ts
+│   │       │   ├── get-jurisdiction.tool.ts
+│   │       │   ├── get-legislators-by-location.tool.ts
+│   │       │   ├── list-jurisdictions.tool.ts
+│   │       │   ├── search-bills.tool.ts
+│   │       │   ├── search-committees.tool.ts
+│   │       │   ├── search-events.tool.ts
+│   │       │   └── search-people.tool.ts
+│   │       ├── bill-votes.ts
+│   │       ├── event-agenda.ts
+│   │       └── link-schema.ts
 │   ├── services/
 │   │   └── openstates/
 │   │       ├── jurisdiction-inventory.ts
@@ -191,6 +195,7 @@ openstates-mcp-server/
 │   │   ├── openstates-service.mock-contract.test.ts
 │   │   └── openstates-service.test.ts
 │   └── tools/
+│       ├── event-agenda.test.ts
 │       ├── get-bill.additional.test.ts
 │       ├── get-bill.tool.test.ts
 │       ├── get-committee.tool.test.ts
