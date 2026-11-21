@@ -6,12 +6,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Load the framework during collection. The config module reads env only when called.
+import '@/config/server-config.js';
+
 /**
- * `getServerConfig` memoizes into a module-level singleton, so each case resets the module
- * registry and re-imports to read a fresh environment.
+ * Each afterEach clears the memoized configuration by resetting the module registry.
+ * Call the getter after the case has stubbed its environment.
  */
 async function loadConfig() {
-  vi.resetModules();
   const { getServerConfig } = await import('@/config/server-config.js');
   return getServerConfig();
 }

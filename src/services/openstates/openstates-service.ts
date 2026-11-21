@@ -150,8 +150,8 @@ const MAX_DETAIL_LENGTH = 200;
 /**
  * Reads the constraint Open States names when it rejects a request. Every 4xx answers with
  * `{"detail": "invalid page, must be in [1, 1]"}` — the exact bound violated, and the only part of
- * the response worth showing the caller. `fetchWithTimeout` captures that body into
- * `error.data.body` but no one reads it, so the caller otherwise sees a bare status line.
+ * the response worth showing the caller. `fetchWithTimeout` captures the body in
+ * `error.data.body` for server-side use. The client gets the extracted detail in the message.
  *
  * The value is upstream-controlled text bound for a message the framework renders above its own
  * `Recovery:` line, so it is flattened to a single line and clamped: a `detail` carrying newlines

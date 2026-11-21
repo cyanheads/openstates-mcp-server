@@ -7,6 +7,8 @@ import { resource, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError, validationError } from '@cyanheads/mcp-ts-core/errors';
 import { getOpenStatesApiService } from '@/services/openstates/openstates-service.js';
 
+const title = 'Jurisdiction Metadata';
+
 /** Percent-decodes the matched URI value once; a malformed escape is the caller's URI, not a server fault. */
 function decodeJurisdictionId(value: string): string {
   try {
@@ -26,12 +28,12 @@ function decodeJurisdictionId(value: string): string {
  * `[^/,]+`, so the slash-delimited OCD ID `openstates_list_jurisdictions` returns routes, and its
  * `expand()` writes that ID back out with `/` and `:` intact. The SDK hands the matched value over
  * still percent-encoded (`New%20York`, `ocd-jurisdiction%2F…`), so the handler decodes it exactly
- * once before the lookup. The decode lives in the handler, not a `params` transform, because
- * params must stay JSON-Schema-serializable for `resources/templates/list`.
+ * once before the lookup. The framework's optional template decoder preserves percent-encoded
+ * reserved characters under `{+…}`; the lookup accepts their decoded form as well.
  */
 export const jurisdictionResource = resource('openstates://jurisdiction/{+jurisdiction_id}', {
   name: 'openstates_jurisdiction',
-  title: 'Jurisdiction Metadata',
+  title,
   description:
     'Jurisdiction metadata including current sessions, coverage dates, and bill/people update timestamps. Use as stable reference context before querying bills or people — inject this to prime session identifiers without a tool call.',
   mimeType: 'application/json',
@@ -95,24 +97,28 @@ export const jurisdictionResource = resource('openstates://jurisdiction/{+jurisd
       {
         uri: 'openstates://jurisdiction/wa',
         name: 'Washington',
+        title,
         description: 'Washington State jurisdiction metadata',
         mimeType: 'application/json',
       },
       {
         uri: 'openstates://jurisdiction/ca',
         name: 'California',
+        title,
         description: 'California jurisdiction metadata',
         mimeType: 'application/json',
       },
       {
         uri: 'openstates://jurisdiction/ny',
         name: 'New York',
+        title,
         description: 'New York jurisdiction metadata',
         mimeType: 'application/json',
       },
       {
         uri: 'openstates://jurisdiction/tx',
         name: 'Texas',
+        title,
         description: 'Texas jurisdiction metadata',
         mimeType: 'application/json',
       },

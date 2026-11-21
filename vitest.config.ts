@@ -1,5 +1,5 @@
 /**
- * @fileoverview Vitest config for the consumer server. Uses Vitest 4 `projects`
+ * @fileoverview Vitest config for the consumer server. Uses Vitest `projects`
  * so you can split suites (unit/smoke/integration/fuzz) and run each with
  * `--project <name>` as the surface grows. Extends the framework's base config
  * for shared `resolve`, `ssr`, and coverage settings.
@@ -11,12 +11,20 @@ import coreConfig from '@cyanheads/mcp-ts-core/vitest.config';
 import { defineConfig, mergeConfig } from 'vitest/config';
 
 const alias = { '@/': new URL('./src/', import.meta.url).pathname };
+const onBun = typeof process.versions.bun === 'string';
+
+if (onBun) {
+  // Bun threads inherit the coordinator's time zone and cannot change their own.
+  process.env.TZ = 'Asia/Kathmandu';
+}
 
 export default mergeConfig(
   coreConfig,
   defineConfig({
     resolve: { alias },
     test: {
+      // Vitest's fork watchdog needs child-process channel methods Bun lacks.
+      ...(onBun ? { pool: 'threads' as const } : {}),
       projects: [
         {
           extends: true,

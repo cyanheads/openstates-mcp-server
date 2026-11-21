@@ -240,6 +240,21 @@ describe('jurisdictionResource — served reads by every identifier form', () =>
     ]);
   });
 
+  it('advertises the jurisdiction metadata title on every listed resource', async () => {
+    const body = await servedRpc('resources/list', {});
+    const resources = (body.result?.resources ?? []) as { uri: string; title?: string }[];
+    expect(
+      resources
+        .filter(({ uri }) => uri.startsWith('openstates://jurisdiction/'))
+        .map(({ uri, title }) => [uri, title]),
+    ).toEqual([
+      ['openstates://jurisdiction/wa', 'Jurisdiction Metadata'],
+      ['openstates://jurisdiction/ca', 'Jurisdiction Metadata'],
+      ['openstates://jurisdiction/ny', 'Jurisdiction Metadata'],
+      ['openstates://jurisdiction/tx', 'Jurisdiction Metadata'],
+    ]);
+  });
+
   it.each([
     ['an abbreviation', 'openstates://jurisdiction/al'],
     ['a single-word state name', 'openstates://jurisdiction/Alabama'],

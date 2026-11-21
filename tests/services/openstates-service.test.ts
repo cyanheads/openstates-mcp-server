@@ -1671,11 +1671,15 @@ describe('fetchJson — rate_limited contract', () => {
           },
         },
       });
+      expect(result).not.toHaveProperty('structuredContent.error.data.body');
+      expect(result).not.toHaveProperty('structuredContent.error.data.responseBody');
       const text = (result.content[0] as { text: string }).text;
       expect(readBack(text)).toEqual([
         `Error: ${message}`,
         `Recovery: ${hint}`,
-        expect.stringMatching(/^\(reason rate_limited · retryable( · request \S+)?\)$/),
+        expect.stringMatching(
+          /^\(reason rate_limited · retryable · retry after 48( · request \S+)?\)$/,
+        ),
       ]);
     } finally {
       shutdownOpenStatesApiService();
@@ -2300,7 +2304,7 @@ describe('daily request budget — configured value reaches the limiter', () => 
   });
 
   it('allows a higher configured budget than the free-tier default', async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(billsPage()));
+    const fetchMock = vi.fn<typeof fetch>(async () => billsPage());
     vi.stubGlobal('fetch', fetchMock);
     initOpenStatesApiService(fakeAppConfig, fakeStorage, {
       ...fakeServerConfig,
@@ -2308,11 +2312,18 @@ describe('daily request budget — configured value reaches the limiter', () => 
     });
     const svc = getOpenStatesApiService();
 
-    // 251 distinct URLs — every one over the 250 default must still reach upstream.
-    for (let i = 0; i < 251; i++) {
-      await svc.searchBills({ q: `q${i}`, page: 1, per_page: 10 }, ctx);
+    // Exercise every cache miss and limiter check without serializing 251 Web Crypto jobs.
+    const queries = Array.from({ length: 251 }, (_, index) => `q${index}`);
+    const batchSize = 16;
+    for (let offset = 0; offset < queries.length; offset += batchSize) {
+      await Promise.all(
+        queries
+          .slice(offset, offset + batchSize)
+          .map((q) => svc.searchBills({ q, page: 1, per_page: 10 }, ctx)),
+      );
     }
     expect(fetchMock).toHaveBeenCalledTimes(251);
+    expect(new Set(fetchMock.mock.calls.map(([input]) => String(input))).size).toBe(251);
   });
 });
 
